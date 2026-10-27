@@ -1,0 +1,604 @@
+import React, { useState } from 'react';
+import { useForm, Controller } from 'react-hook-form';
+import { Tab } from '@headlessui/react';
+import { Switch } from '@headlessui/react';
+import { v4 as uuidv4 } from 'uuid';
+import { PlusIcon, XMarkIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
+import api from '../services/mockApi';
+import { useAuth } from '../hooks/useAuth';
+import { 
+    RewardType, 
+    RewardValueType, 
+    RewardVisibility, 
+    RewardForm,
+    IRewardCategory,
+    Role
+} from '../types';
+
+// Predefined categories
+const CATEGORIES = [
+    { id: '1', name: 'Achievement', color: '#FF5733' },
+    { id: '2', name: 'Performance', color: '#33FF57' },
+    { id: '3', name: 'Special Event', color: '#3357FF' },
+    { id: '4', name: 'Learning', color: '#FF33F5' }
+];
+
+// Available icons for rewards
+const ICONS = ['🎉', '🏆', '⭐', '🎯', '💎', '🌟', '🎁', '🥇', '🏅', '👑'];
+
+interface CreateRewardModalProps {
+    isOpen: boolean;
+    onClose: () => void;
+    onRewardCreated: () => void;
+}
+
+const defaultValues: Partial<RewardForm> = {
+    rewardCode: uuidv4(),
+    autoApproval: true,
+    neverExpires: false,
+    redemptionLimit: 1,
+    notificationEnabled: true,
+    theme: {
+        color: '#00AEEF',
+        icon: '🎉'
+    },
+    createdAt: new Date(),
+    type: RewardType.GIFT_CARD,
+    valueType: RewardValueType.MONETARY,
+    visibility: RewardVisibility.PUBLIC,
+    categories: [],
+    eligibleRoles: [],
+    congratulatoryMessage: 'Congratulations on earning this reward! 🎉'
+};
+
+const tabNames = ['Basic Info', 'Eligibility & Rules', 'Design & Visibility', 'Advanced Settings'];
+
+const CreateRewardModal: React.FC<CreateRewardModalProps> = ({ isOpen, onClose, onRewardCreated }) => {
+    const { user: currentUser } = useAuth();
+    const [activeTab, setActiveTab] = useState(0);
+    const [imagePreview, setImagePreview] = useState<string | null>(null);
+
+    const { 
+        register, 
+        control,
+        handleSubmit,
+        watch,
+        setValue,
+        formState: { errors, isSubmitting }
+    } = useForm<RewardForm>({
+        defaultValues: defaultValues as RewardForm
+    });    const onSubmit = async (data: RewardForm) => {
+        try {
+            if (!currentUser) return;
+            
+            const formData = {
+                ...data,
+                createdBy: currentUser.id,
+                createdAt: new Date(),
+                lastEditedBy: currentUser.id,
+                lastEditedAt: new Date()
+            };
+
+            // TODO: Replace with actual API call
+            console.log('Submitting reward:', formData);
+            onRewardCreated();
+            onClose();
+        } catch (error) {
+            console.error('Error creating reward:', error);
+        }
+    };
+
+    const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                setValue('imageUrl', reader.result as string);
+                setImagePreview(reader.result as string);
+            };
+            reader.readAsDataURL(file);
+        }
+    };
+
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-gray-900 rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden">
+                <div className="p-6">
+                    <div className="flex justify-between items-center mb-6">
+                        <h2 className="text-2xl font-bold text-white">Add New Reward</h2>
+                        <button
+                            onClick={onClose}
+                            className="text-gray-400 hover:text-gray-300"
+                        >
+                            <XMarkIcon className="h-6 w-6" />
+                        </button>
+                    </div>
+
+                    <form onSubmit={formSubmit(onSubmit)}>
+                        <Tab.Group selectedIndex={activeTab} onChange={setActiveTab}>
+                            <Tab.List className="flex space-x-2 border-b border-gray-700 mb-6">
+                                {tabNames.map((tab) => (
+                                    <Tab
+                                        key={tab}
+                                        className={({ selected }) =>
+                                            `px-4 py-2 text-sm font-medium focus:outline-none ${
+                                                selected
+                                                    ? 'text-blue-500 border-b-2 border-blue-500'
+                                                    : 'text-gray-400 hover:text-gray-300'
+                                            }`
+                                        }
+                                    >
+                                        {tab}
+                                    </Tab>
+                                ))}
+                            </Tab.List>
+
+                            <Tab.Panels className="mt-4">
+                                {/* Basic Info Tab */}
+                                <Tab.Panel className="space-y-4">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-300">
+                                                Title
+                                            </label>
+                                            <input
+                                                {...register('title', { required: 'Title is required' })}
+                                                className="mt-1 block w-full rounded-md bg-gray-800 border-gray-700 text-white"
+                                                placeholder="Enter reward title"
+                                            />
+                                            {errors.title && (
+                                                <span className="text-red-500 text-sm">{errors.title.message}</span>
+                                            )}
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-300">
+                                                Points Required
+                                            </label>
+                                            <input
+                                                type="number"
+                                                {...register('pointsRequired', { 
+                                                    required: 'Points are required',
+                                                    min: { value: 1, message: 'Must be greater than 0' }
+                                                })}
+                                                className="mt-1 block w-full rounded-md bg-gray-800 border-gray-700 text-white"
+                                            />
+                                        </div>
+
+                                        <div className="col-span-2">
+                                            <label className="block text-sm font-medium text-gray-300">
+                                                Description
+                                            </label>
+                                            <textarea
+                                                {...register('description', { required: 'Description is required' })}
+                                                rows={3}
+                                                className="mt-1 block w-full rounded-md bg-gray-800 border-gray-700 text-white"
+                                                placeholder="Describe the reward"
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-300">
+                                                Value
+                                            </label>
+                                            <input
+                                                {...register('value')}
+                                                className="mt-1 block w-full rounded-md bg-gray-800 border-gray-700 text-white"
+                                                placeholder="e.g., Worth ₹200"
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-300">
+                                                Reward Type
+                                            </label>
+                                            <Controller
+                                                name="type"
+                                                control={control}
+                                                render={({ field }) => (
+                                                    <select
+                                                        {...field}
+                                                        className="mt-1 block w-full rounded-md bg-gray-800 border-gray-700 text-white"
+                                                    >
+                                                        {Object.values(RewardType).map((type) => (
+                                                            <option key={type} value={type}>
+                                                                {type}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                )}
+                                            />
+                                        </div>
+                                    </div>
+                                </Tab.Panel>
+
+                                {/* Eligibility & Rules Tab */}
+                                <Tab.Panel className="space-y-4">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-300">
+                                                Eligible Roles
+                                            </label>
+                                            <Controller
+                                                name="eligibleRoles"
+                                                control={control}
+                                                render={({ field }) => (
+                                                    <select
+                                                        multiple
+                                                        {...field}
+                                                        className="mt-1 block w-full rounded-md bg-gray-800 border-gray-700 text-white"
+                                                    >
+                                                        {Object.values(Role).map((role) => (
+                                                            <option key={role} value={role}>
+                                                                {role}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                )}
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-300">
+                                                Redemption Limit
+                                            </label>
+                                            <input
+                                                type="number"
+                                                {...register('redemptionLimit')}
+                                                className="mt-1 block w-full rounded-md bg-gray-800 border-gray-700 text-white"
+                                            />
+                                        </div>
+
+                                        <div className="col-span-2">
+                                            <label className="block text-sm font-medium text-gray-300">
+                                                Expiry Date
+                                            </label>
+                                            <div className="flex items-center space-x-4">
+                                                <Controller
+                                                    name="neverExpires"
+                                                    control={control}
+                                                    render={({ field }) => (
+                                                        <Switch
+                                                            checked={field.value}
+                                                            onChange={field.onChange}
+                                                            className={`${
+                                                                field.value ? 'bg-blue-600' : 'bg-gray-700'
+                                                            } relative inline-flex h-6 w-11 items-center rounded-full`}
+                                                        >
+                                                            <span className="sr-only">Never Expires</span>
+                                                            <span
+                                                                className={`${
+                                                                    field.value ? 'translate-x-6' : 'translate-x-1'
+                                                                } inline-block h-4 w-4 transform rounded-full bg-white`}
+                                                            />
+                                                        </Switch>
+                                                    )}
+                                                />
+                                                <span className="text-sm text-gray-300">Never Expires</span>
+                                                {!watch('neverExpires') && (
+                                                    <input
+                                                        type="date"
+                                                        {...register('expiryDate')}
+                                                        className="mt-1 block w-full rounded-md bg-gray-800 border-gray-700 text-white"
+                                                    />
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </Tab.Panel>
+
+                                {/* Design & Visibility Tab */}
+                                <Tab.Panel className="space-y-4">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-300">
+                                                Reward Image
+                                            </label>
+                                            <input
+                                                type="file"
+                                                onChange={handleImageChange}
+                                                accept="image/*"
+                                                className="mt-1 block w-full text-gray-300"
+                                            />
+                                            {imagePreview && (
+                                                <img
+                                                    src={imagePreview}
+                                                    alt="Preview"
+                                                    className="mt-2 h-32 w-32 object-cover rounded"
+                                                />
+                                            )}
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-300">
+                                                Theme Color
+                                            </label>
+                                            <Controller
+                                                name="theme.color"
+                                                control={control}
+                                                render={({ field }) => (
+                                                    <input
+                                                        type="color"
+                                                        {...field}
+                                                        className="mt-1 block w-full h-10 rounded-md bg-gray-800 border-gray-700"
+                                                    />
+                                                )}
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-300">
+                                                Icon
+                                            </label>
+                                            <Controller
+                                                name="theme.icon"
+                                                control={control}
+                                                render={({ field }) => (
+                                                    <div className="grid grid-cols-5 gap-2 mt-1">
+                                                        {ICONS.map((icon) => (
+                                                            <button
+                                                                key={icon}
+                                                                type="button"
+                                                                onClick={() => field.onChange(icon)}
+                                                                className={`text-2xl p-2 rounded ${
+                                                                    field.value === icon
+                                                                        ? 'bg-blue-600'
+                                                                        : 'bg-gray-800'
+                                                                }`}
+                                                            >
+                                                                {icon}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-300">
+                                                Visibility
+                                            </label>
+                                            <Controller
+                                                name="visibility"
+                                                control={control}
+                                                render={({ field }) => (
+                                                    <select
+                                                        {...field}
+                                                        className="mt-1 block w-full rounded-md bg-gray-800 border-gray-700 text-white"
+                                                    >
+                                                        {Object.values(RewardVisibility).map((visibility) => (
+                                                            <option key={visibility} value={visibility}>
+                                                                {visibility}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                )}
+                                            />
+                                        </div>
+                                    </div>
+                                </Tab.Panel>
+
+                                {/* Advanced Settings Tab */}
+                                <Tab.Panel className="space-y-4">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="col-span-2">
+                                            <label className="block text-sm font-medium text-gray-300">
+                                                Congratulatory Message
+                                            </label>
+                                            <textarea
+                                                {...register('congratulatoryMessage')}
+                                                rows={3}
+                                                className="mt-1 block w-full rounded-md bg-gray-800 border-gray-700 text-white"
+                                                placeholder="Message shown after redemption"
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label className="flex items-center space-x-2">
+                                                <Controller
+                                                    name="autoApproval"
+                                                    control={control}
+                                                    render={({ field }) => (
+                                                        <Switch
+                                                            checked={field.value}
+                                                            onChange={field.onChange}
+                                                            className={`${
+                                                                field.value ? 'bg-blue-600' : 'bg-gray-700'
+                                                            } relative inline-flex h-6 w-11 items-center rounded-full`}
+                                                        >
+                                                            <span className="sr-only">Auto Approval</span>
+                                                            <span
+                                                                className={`${
+                                                                    field.value ? 'translate-x-6' : 'translate-x-1'
+                                                                } inline-block h-4 w-4 transform rounded-full bg-white`}
+                                                            />
+                                                        </Switch>
+                                                    )}
+                                                />
+                                                <span className="text-sm text-gray-300">Auto Approval</span>
+                                            </label>
+                                        </div>
+
+                                        <div>
+                                            <label className="flex items-center space-x-2">
+                                                <Controller
+                                                    name="notificationEnabled"
+                                                    control={control}
+                                                    render={({ field }) => (
+                                                        <Switch
+                                                            checked={field.value}
+                                                            onChange={field.onChange}
+                                                            className={`${
+                                                                field.value ? 'bg-blue-600' : 'bg-gray-700'
+                                                            } relative inline-flex h-6 w-11 items-center rounded-full`}
+                                                        >
+                                                            <span className="sr-only">Enable Notifications</span>
+                                                            <span
+                                                                className={`${
+                                                                    field.value ? 'translate-x-6' : 'translate-x-1'
+                                                                } inline-block h-4 w-4 transform rounded-full bg-white`}
+                                                            />
+                                                        </Switch>
+                                                    )}
+                                                />
+                                                <span className="text-sm text-gray-300">Enable Notifications</span>
+                                            </label>
+                                        </div>
+
+                                        <div className="col-span-2">
+                                            <label className="block text-sm font-medium text-gray-300">
+                                                Conditional Unlock Rule
+                                            </label>
+                                            <textarea
+                                                {...register('conditionalRule')}
+                                                rows={3}
+                                                className="mt-1 block w-full rounded-md bg-gray-800 border-gray-700 text-white"
+                                                placeholder="Enter conditions for unlocking this reward"
+                                            />
+                                        </div>
+                                    </div>
+                                </Tab.Panel>
+                            </Tab.Panels>
+                        </Tab.Group>
+
+                        <div className="mt-6 flex justify-end space-x-3">
+                            <button
+                                type="button"
+                                onClick={onClose}
+                                className="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white bg-gray-700 rounded-md"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={isSubmitting}
+                                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50"
+                            >
+                                {isSubmitting ? 'Creating...' : 'Create Reward'}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    );
+
+interface CreateRewardModalProps {
+    isOpen: boolean;
+    onClose: () => void;
+    onRewardCreated: () => void;
+}
+
+const defaultReward: Partial<RewardForm> = {
+    rewardCode: uuidv4(),
+    autoApproval: true,
+    neverExpires: false,
+    redemptionLimit: 1,
+    notificationEnabled: true,
+    theme: {
+        color: '#00AEEF',
+        icon: '🎉'
+    },
+    createdAt: new Date()
+};
+
+const CreateRewardModal: React.FC<CreateRewardModalProps> = ({ isOpen, onClose, onRewardCreated }) => {
+    const { user: currentUser } = useAuth();
+    const [activeTab, setActiveTab] = useState(0);
+    const [imagePreview, setImagePreview] = useState<string | null>(null);
+    const [previewData, setPreviewData] = useState<Partial<RewardForm>>(defaultReward);
+    
+    const { 
+        register, 
+        control,
+        handleSubmit,
+        watch,
+        setValue,
+        formState: { errors, isSubmitting }
+    } = useForm<RewardForm>({
+        defaultValues: defaultReward as RewardForm
+    });
+
+    const onSubmit = async (data: RewardForm) => {
+        try {
+            if (!currentUser) {
+                return;
+            }
+            
+            const formData = {
+                ...data,
+                createdBy: currentUser.id,
+                createdAt: new Date(),
+                lastEditedBy: currentUser.id,
+                lastEditedAt: new Date()
+            };
+
+            await api.post('/rewards', formData);
+            onRewardCreated();
+            onClose();
+        } catch (error) {
+            console.error('Error creating reward:', error);
+        }
+    };
+
+    const handleClose = () => {
+        onClose();
+    };
+
+    const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                setValue('imageUrl', reader.result as string);
+                setImagePreview(reader.result as string);
+            };
+            reader.readAsDataURL(file);
+        }
+    };
+
+
+
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-70 z-50 flex justify-center items-center p-4">
+            <div className="bg-surface p-8 rounded-lg shadow-xl w-full max-w-md border border-border-color">
+                <h2 className="text-2xl font-bold mb-6 text-text-primary">Add New Reward</h2>
+                                    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+                    <div>
+                        <label htmlFor="reward-title" className="block text-sm font-medium text-text-secondary">Title</label>
+                                                                <input type="text" id="reward-title" {...register('title', { required: 'Title is required' })} className="mt-1 block w-full bg-background border border-border-color round
+                    </div>
+                    <div>
+                        <label htmlFor="reward-desc" className="block text-sm font-medium text-text-secondary">Description</label>
+                        <input type="text" id="reward-desc" value={description} onChange={e => setDescription(e.target.value)} required className="mt-1 block w-full bg-background border border-border-color rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-primary focus:border-primary" />
+                    </div>
+                     <div>
+                        <label htmlFor="reward-points" className="block text-sm font-medium text-text-secondary">Points Required</label>
+                        <input type="number" id="reward-points" value={pointsRequired} onChange={e => setPointsRequired(e.target.value === '' ? '' : parseInt(e.target.value, 10))} required min="1" className="mt-1 block w-full bg-background border border-border-color rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-primary focus:border-primary" />
+                    </div>
+                    <div>
+                        <label htmlFor="reward-value" className="block text-sm font-medium text-text-secondary">Value (e.g., "Worth ₹200")</label>
+                        <input type="text" id="reward-value" value={value} onChange={e => setValue(e.target.value)} required className="mt-1 block w-full bg-background border border-border-color rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-primary focus:border-primary" />
+                    </div>
+
+                    {error && <p className="text-red-500 text-sm">{error}</p>}
+
+                    <div className="flex justify-end space-x-4 pt-4">
+                        <button type="button" onClick={handleClose} className="py-2 px-4 bg-gray-600 text-white rounded-md hover:bg-gray-700">Cancel</button>
+                        <button type="submit" disabled={isSubmitting} className="py-2 px-4 bg-primary text-white rounded-md hover:bg-primary-dark disabled:opacity-50">
+                            {isSubmitting ? 'Adding...' : 'Add Reward'}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+};
+
+export default CreateRewardModal;
+
+export default CreateRewardModal;

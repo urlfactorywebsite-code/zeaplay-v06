@@ -1,0 +1,119 @@
+import type { Task, User, Role, KanbanColumn } from '../types';
+import { TaskStatus, TaskPriority, CUSTOM_STATUS_NAMES } from '../types';
+import { useAuth, useSearch, useTheme } from '../hooks/useAuth';
+import api from '../services/mockApi';
+import TaskDetailModal from '../components/TaskDetailModal';
+import CreateColumnModal from '../components/CreateColumnModal';
+import EditColumnModal from '../components/EditColumnModal';
+import { formatTaskStatus } from '../utils';
+import { PlusIcon, TrashIcon, PencilIcon, RocketLaunchIcon, ClipboardDocumentListIcon, PuzzlePieceIcon, FireIcon, AcademicCapIcon, ExclamationTriangleIcon, NoSymbolIcon, TrophyIcon, XMarkIcon } from '../components/icons';
+
+type DragState = {
+    taskId: string | null;
+    sourceColumn: string | null;
+};
+
+type ThemeMode = 'light' | 'dark' | 'colorful' | 'system';
+type ResolvedTheme = 'light' | 'dark' | 'colorful';
+
+type KanbanTaskCardProps = {
+    task: Task;
+    assignee: User | undefined;
+    onDragStart: (e: React.DragEvent<HTMLDivElement>, taskId: string) => void;
+    onClick: (taskId: string) => void;
+    theme: ResolvedTheme;
+};
+
+type KanbanNote = {
+    id: string;
+    title: string;
+    body: string;
+    createdAt: string;
+    updatedAt: string;
+};
+
+type KanbanNoteCardProps = {
+    note: KanbanNote;
+    onUpdate: (id: string, updates: Partial<KanbanNote>) => void;
+    onDelete: (id: string) => void;
+    resolvedTheme: ResolvedTheme;
+};
+
+const resolveTheme = (theme: ThemeMode): ResolvedTheme => {
+    if (theme === 'colorful') return 'colorful';
+    if (theme === 'light') return 'light';
+    if (theme === 'dark') return 'dark';
+    if (typeof window !== 'undefined') {
+        return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    return 'dark';
+};
+
+const useResolvedTheme = (theme: ThemeMode): ResolvedTheme => {
+    const [resolved, setResolved] = useState<ResolvedTheme>(() => resolveTheme(theme));
+
+    useEffect(() => {
+        if (theme === 'system') {
+            const media = window.matchMedia('(prefers-color-scheme: dark)');
+            const listener = () => setResolved(media.matches ? 'dark' : 'light');
+            listener();
+            media.addEventListener('change', listener);
+            return () => media.removeEventListener('change', listener);
+        }
+
+        setResolved(resolveTheme(theme));
+    }, [theme]);
+
+    return resolved;
+};
+
+const statusDetails = {
+    [TaskStatus.WAITING_FOR_REQUIREMENT]: {
+        label: 'Battle Plan',
+        legend: 'New / Ready',
+        gradient: 'from-slate-500/30 via-slate-600/30 to-slate-800/40',
+        icon: RocketLaunchIcon,
+    },
+    [TaskStatus.TODO]: {
+        label: 'Case Filed',
+        legend: 'Assigned / To Do',
+        gradient: 'from-indigo-500/25 via-sky-500/25 to-cyan-500/35',
+        icon: ClipboardDocumentListIcon,
+    },
+    [TaskStatus.IN_PROGRESS]: {
+        label: 'Dungeon Entry',
+        legend: 'In Progress',
+        gradient: 'from-purple-500/25 via-fuchsia-500/25 to-rose-500/35',
+        icon: PuzzlePieceIcon,
+    },
+    [TaskStatus.BLOCKED]: {
+        label: 'Boss Encounter',
+        legend: 'Blocked / Critical',
+        gradient: 'from-amber-500/25 via-orange-500/25 to-rose-500/35',
+        icon: FireIcon,
+    },
+    [TaskStatus.IN_REVIEW]: {
+        label: 'Tactical Shift',
+        legend: 'Manager Review / QA',
+        gradient: 'from-emerald-500/25 via-teal-500/25 to-sky-400/35',
+        icon: AcademicCapIcon,
+    },
+    [TaskStatus.ON_HOLD]: {
+        label: 'Graveyard',
+        legend: 'Archived',
+        gradient: 'from-gray-500/25 via-gray-600/25 to-gray-700/35',
+        icon: NoSymbolIcon,
+    },
+    [TaskStatus.DONE]: {
+        label: 'Conquered',
+        legend: 'Done / Complete - level rewards',
+        gradient: 'from-green-500/25 via-emerald-500/25 to-teal-500/35',
+        icon: TrophyIcon,
+    },
+    [TaskStatus.FAILED]: {
+        label: 'Fallen',
+        legend: 'Mission Failed - Could not complete',
+        gradient: 'from-red-500/25 via-rose-500/25 to-pink-500/35',
+        icon: XMarkIcon,
+    }
+} as const;
