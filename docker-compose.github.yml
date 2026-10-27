@@ -1,0 +1,40 @@
+# Use with docker-compose.prod.yml to build the application from this checkout.
+# PostgreSQL, Redis and the existing worker images remain defined by production.
+services:
+  backend:
+    image: zeaplay-v06/backend:local
+    build:
+      context: ${ZEAPLAY_SOURCE_DIR:-.}/backend
+    # The source Dockerfile uses Uvicorn; gunicorn_conf.py is not in this checkout.
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "6211"
+      - --workers
+      - ${WEB_CONCURRENCY:-2}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:6211/health', timeout=5)"]
+      interval: 10s
+      timeout: 6s
+      retries: 12
+      start_period: 60s
+
+  frontend:
+    image: zeaplay-v06/frontend:local
+    build:
+      context: ${ZEAPLAY_SOURCE_DIR:-.}/frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-https://playapi.zeacrm.com}
+        VITE_API_URL: ${VITE_API_URL:-https://playapi.zeacrm.com}
+        VITE_PRESENCE_URL: ${VITE_PRESENCE_URL:-${PRESENCE_URL}}
+        VITE_CHAT_URL: ${VITE_CHAT_URL:-${PRESENCE_URL}}
+        VITE_WS_URL: ${VITE_WS_URL:-${WS_URL:-wss://todoplay.urlfactory.website}}
+        VITE_TICKET_CHAT_WS_URL: ${VITE_TICKET_CHAT_WS_URL:-${TICKET_CHAT_WS_URL:-wss://todoplay.urlfactory.website}}
+
+  presence:
+    image: zeaplay-v06/presence:local
+    build:
+      context: ${ZEAPLAY_SOURCE_DIR:-.}/presence-server
