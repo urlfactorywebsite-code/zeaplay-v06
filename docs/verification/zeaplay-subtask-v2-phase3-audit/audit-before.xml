@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="3" skipped="1" tests="4" time="10.013" timestamp="2026-11-02T15:55:31.151991+05:30" hostname="DESKTOP-3QGSJ16"><testcase classname="backend.tests.test_subtask_reward_audit" name="test_config_read_does_not_commit_a_financial_transaction" time="2.104"><failure message="AssertionError: assert 'Must roll back' == 'Preserve'&#10;  &#10;  - Preserve&#10;  + Must roll back">backend\tests\test_subtask_reward_audit.py:41: in test_config_read_does_not_commit_a_financial_transaction
+    assert db.get(m.Task, "task").title == "Preserve"
+E   AssertionError: assert 'Must roll back' == 'Preserve'
+E     
+E     - Preserve
+E     + Must roll back</failure></testcase><testcase classname="backend.tests.test_subtask_reward_audit" name="test_generic_adjustment_cannot_bypass_reward_wallet" time="1.653"><failure message="Failed: DID NOT RAISE HTTPException">backend\tests\test_subtask_reward_audit.py:52: in test_generic_adjustment_cannot_bypass_reward_wallet
+    with pytest.raises(HTTPException) as failure:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE HTTPException</failure></testcase><testcase classname="backend.tests.test_subtask_reward_audit" name="test_database_refuses_reversal_of_reversal_and_policy_alias" time="2.094"><failure message="Failed: DID NOT RAISE IntegrityError">backend\tests\test_subtask_reward_audit.py:79: in test_database_refuses_reversal_of_reversal_and_policy_alias
+    with pytest.raises(sa.exc.IntegrityError), db.begin_nested():
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE IntegrityError</failure></testcase><testcase classname="backend.tests.test_subtask_reward_audit" name="test_postgres_duplicate_workers_are_state_idempotent" time="1.473"><skipped type="pytest.skip" message="PostgreSQL concurrency required">C:\Users\Lenovo\AppData\Local\Temp\zeaplay-phase3-audit-155f8babbd114e4cadc717b73ea1990e\backend\tests\test_subtask_reward_audit.py:88: PostgreSQL concurrency required</skipped></testcase></testsuite></testsuites>

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { User, Role } from '../types';
 import api from '../services/mockApi';
 import { getAccessToken } from '../services/tokenStorage';
-import { AUTH_EXPIRED_EVENT } from '../utils/appEvents';
+import { AUTH_EXPIRED_EVENT, USER_PROFILE_UPDATED_EVENT } from '../utils/appEvents';
 import PageLoader from '../components/loading/PageLoader';
 
 // Auth Context
@@ -57,6 +57,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
   }, [navigate]);
   
+  useEffect(() => {
+    const updated = (event: Event) => {
+      const profile = (event as CustomEvent<User>).detail;
+      setUser(previous => previous?.id === profile.id ? profile : previous);
+    };
+    window.addEventListener(USER_PROFILE_UPDATED_EVENT, updated);
+    return () => window.removeEventListener(USER_PROFILE_UPDATED_EVENT, updated);
+  }, []);
+
   const login = async (email: string, pass: string) => {
     const loggedInUser = await api.login(email, pass);
     setUser(loggedInUser);
@@ -84,6 +93,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     </AuthContext.Provider>
   );
 };
+
+export const useOptionalAuth = () => useContext(AuthContext);
 
 export const useAuth = () => {
   const context = useContext(AuthContext);

@@ -7,23 +7,28 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
+    CheckConstraint,
     DateTime,
-    Enum as SAEnum,
     ForeignKey,
     Index,
     Integer,
-    JSON,
     String,
     Text,
     UniqueConstraint,
+    event,
     text,
+)
+from sqlalchemy import (
+    Enum as SAEnum,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from ..database import Base
+from ..models import normalize_workflow_created_at
 
 
 class TicketStatusEnum(str, enum.Enum):
@@ -702,6 +707,20 @@ class WebhookDeliveryLog(Base):
 
 class XpLedger(Base):
     __tablename__ = "xp_ledger"
+    __table_args__ = (
+        CheckConstraint("record_version IN (1, 2)", name="ck_xp_ledger_record_version"),
+        UniqueConstraint("tenant_id", "idempotency_key", name="uq_xp_ledger_tenant_idempotency"),
+        UniqueConstraint("tenant_id", "reversal_of_id", name="uq_xp_ledger_reversal"),
+        Index("ix_xp_ledger_tenant_user_time", "tenant_id", "user_id", "created_at", "id"),
+        Index("ix_xp_ledger_tenant_task_time", "tenant_id", "task_id", "created_at", "id"),
+        Index("ix_xp_ledger_event", "activity_event_id"),
+        Index("ix_xp_ledger_user_v2", "user_id", sqlite_where=text("record_version = 2"), postgresql_where=text("record_version = 2")),
+        Index("ix_xp_ledger_task_ref", "task_id"),
+        Index("ix_xp_ledger_subtask_ref", "subtask_id"),
+        Index("uq_xp_ledger_subtask_component_event", "tenant_id", "activity_event_id", "subtask_id", "component_type", unique=True,
+            sqlite_where=text("ref_type = 'subtask-additional-v1' AND reversal_of_id IS NULL"),
+            postgresql_where=text("ref_type = 'subtask-additional-v1' AND reversal_of_id IS NULL")),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
@@ -714,3 +733,17 @@ class XpLedger(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    record_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)
+    task_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("tasks.id", ondelete="RESTRICT"), nullable=True)
+    subtask_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("subtasks.id", ondelete="RESTRICT"), nullable=True)
+    component_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    policy_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    activity_event_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("audit_events.id", ondelete="RESTRICT"), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reversal_of_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("xp_ledger.id", ondelete="RESTRICT"), nullable=True)
+    calculation_inputs: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+event.listen(XpLedger, "load", normalize_workflow_created_at)
+event.listen(XpLedger, "refresh", normalize_workflow_created_at)

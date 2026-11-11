@@ -26,7 +26,7 @@ class LocalAdapter(StorageAdapter):
     def _full_path(self, relative_path: str) -> Path:
         normalized = self._normalize(relative_path)
         full = (self.root / normalized).resolve()
-        if not str(full).startswith(str(self.root)):
+        if not full.is_relative_to(self.root):
             raise ValueError("Attempted path traversal outside MEDIA_ROOT")
         return full
 

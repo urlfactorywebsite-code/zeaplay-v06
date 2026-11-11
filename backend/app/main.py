@@ -1,26 +1,34 @@
 ﻿import asyncio
 from pathlib import Path
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect, select, text
 from sqlalchemy.exc import ProgrammingError
 
 from .config import get_settings
+from .version import APP_VERSION
 from .database import Base, SessionLocal, engine
 from . import models
 from .dependencies import _decode_access_token
+from .navigation_guard import enforce_navigation_policy
 from .services import audit_logger
+from .services.task_activity import ActivityLimitExceeded
+from .services.workload_notifications import limit_error_handler, start_maintenance, stop_maintenance
 from .seed import seed_database, seed_badges_from_achievements
+from .avatar_http import AvatarSafeStaticFiles
 from .avatar_utils import ensure_avatar_dirs
 from .routers import (
     achievements,
+    ai,
     badges,
     avatars,
     auth,
     comments,
     config as config_router,
     feature_flags,
+    navigation,
+    support,
     data_admin,
     departments,
     kanban,
@@ -48,6 +56,8 @@ from .ws import chat as chat_ws, ticket_chat, tasks as tasks_ws
 from .services import task_events
 from .chat import realtime as chat_realtime
 from .webhooks.dispatcher import start_webhook_retry_worker, stop_webhook_retry_worker
+from .backups.router import router as backup_manager_router
+from .backups.maintenance import start_backup_maintenance, stop_backup_maintenance
 from .webhooks.schema import ensure_webhook_schema
 
 settings = get_settings()
@@ -471,7 +481,12 @@ def ensure_kanban_columns() -> None:
         session.commit()
 
 
-app = FastAPI(title=settings.app_name)
+app = FastAPI(title=settings.app_name, version=APP_VERSION, dependencies=[Depends(enforce_navigation_policy)])
+app.add_exception_handler(ActivityLimitExceeded, limit_error_handler)
+app.include_router(navigation.router)
+app.include_router(navigation.router, prefix="/api")
+app.include_router(support.router)
+app.include_router(support.router, prefix="/api")
 
 
 @app.middleware("http")
@@ -528,7 +543,7 @@ async def audit_security_events(request: Request, call_next):
         )
     )
     return response
-app.mount("/assets", StaticFiles(directory="assets"), name="assets")
+app.mount("/assets", AvatarSafeStaticFiles(directory="assets"), name="assets")
 
 uploads_directory = Path(settings.media_root) / "uploads"
 uploads_directory.mkdir(parents=True, exist_ok=True)
@@ -539,7 +554,11 @@ origins = [
     "http://127.0.0.1:3000",
     "http://localhost:3001",
     "https://play.zeacrm.com",
+<<<<<<< ours
     "http://173.212.192.6:6300",
+=======
+    "http://173.212.192.6:7300",
+>>>>>>> theirs
     "http://127.0.0.1:3001",
     # add your dev or prod origins here
 ]
@@ -550,6 +569,7 @@ app.add_middleware(
     allow_credentials=settings.cors_allow_credentials,
     allow_methods=settings.cors_allow_methods,
     allow_headers=settings.cors_allow_headers,
+    expose_headers=["X-Zea-Push-Binding"],
 )
 
 
@@ -570,14 +590,21 @@ def startup_event() -> None:
     ensure_kanban_columns()
     ensure_avatar_dirs()
     start_webhook_retry_worker()
+    start_maintenance()
+    start_backup_maintenance()
     loop = asyncio.get_event_loop()
-    task_events.start_task_event_listener(loop=loop, handler=tasks_ws.broadcast_task_event)
+    task_events.start_task_event_listener(
+        loop=loop, handler=tasks_ws.broadcast_task_event,
+        on_reconnect=tasks_ws.broadcast_task_resync,
+    )
     chat_realtime.start_chat_event_listener(loop=loop, handler=chat_ws.manager.dispatch_remote_event)
 
 
 @app.on_event("shutdown")
 def shutdown_event() -> None:
     stop_webhook_retry_worker()
+    stop_maintenance()
+    stop_backup_maintenance()
     task_events.stop_task_event_listener()
     chat_realtime.stop_chat_event_listener()
 
@@ -601,6 +628,7 @@ app.include_router(config_router.router)
 app.include_router(feature_flags.router)
 app.include_router(n8n.router)
 app.include_router(data_admin.router)
+app.include_router(backup_manager_router)
 app.include_router(oauth2_server.router)
 app.include_router(avatars.router)
 app.include_router(media.router)
@@ -618,6 +646,7 @@ app.include_router(webhooks.router)
 app.include_router(webhooks.internal_router)
 
 app.include_router(auth.router, prefix="/api")
+app.include_router(ai.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(departments.router, prefix="/api")
 app.include_router(kanban.router, prefix="/api")
@@ -635,6 +664,7 @@ app.include_router(config_router.router, prefix="/api")
 app.include_router(feature_flags.router, prefix="/api")
 app.include_router(n8n.router, prefix="/api")
 app.include_router(data_admin.router, prefix="/api")
+app.include_router(backup_manager_router, prefix="/api")
 app.include_router(oauth2_server.router, prefix="/api")
 app.include_router(avatars.router, prefix="/api")
 app.include_router(logs.router, prefix="/api")
@@ -650,7 +680,7 @@ app.include_router(chat_ws.router, prefix="/api")
 
 
 def _health_response() -> dict[str, str]:
-    return {"status": "ok", "app": settings.app_name}
+    return {"status": "ok", "app": settings.app_name, "version": APP_VERSION}
 
 
 @app.get("/")

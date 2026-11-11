@@ -182,6 +182,8 @@ export interface TaskTemplateAssignRequest {
   assignmentType: TaskTemplateAssignmentType;
   userIds?: string[];
   departmentId?: string;
+  plannedStartDate?: string;
+  plannedEndDate?: string;
 }
 
 export enum Role {
@@ -925,6 +927,7 @@ export interface AvatarAsset {
 
 
 export interface User {
+  profileBio?: string | null;
   id: string;
   name: string;
   email: string;
@@ -1181,10 +1184,32 @@ export interface UserProgressRead {
 
 
 
+export type SubtaskStatus = 'TODO' | 'IN_PROGRESS' | 'PAUSED' | 'TESTING' | 'COMPLETED';
+export type SubtaskAction = 'START' | 'PAUSE' | 'RESUME' | 'SEND_TO_TESTING' | 'COMPLETE' | 'REOPEN';
+
 export interface Subtask {
+    deletedAt?: string | null;
+    rewardTimezone?: string | null;
     id: string;
     title: string;
     completed: boolean;
+    plannedStartDate?: string | null;
+    plannedEndDate?: string | null;
+    actualStartAt?: string | null;
+    actualEndAt?: string | null;
+    priorityOverride?: TaskPriority | null;
+    effectivePriority?: TaskPriority | null;
+    status?: SubtaskStatus;
+    managed?: boolean;
+    version?: number;
+    pointPolicyVersion?: string;
+}
+
+export interface SubtaskChanges extends Partial<Subtask> {
+    deleted?: boolean;
+    action?: SubtaskAction;
+    confirmActualTimes?: boolean;
+    manage?: boolean;
 }
 
 export type TaskPointsStatus = 'pending' | 'pending-overdue' | 'completed-on-time' | 'completed-early' | 'completed-late' | 'failed' | 'unconfigured';
@@ -1212,7 +1237,24 @@ export interface TaskPointsBreakdown {
   calculatedAt: string; // ISO string
 }
 
+export interface SubtaskActivity {
+  id: string;
+  subtask_id: string | null;
+  actor_id: string;
+  event_type: string;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface SubtaskRewardSummary {
+  eligible_count:number; available_base:number; base_capacity:number; earned:number;
+  earned_by_recipient:Record<string,number>; available_recipient_id:string | null; policy_version:string;
+}
+
 export interface Task {
+  subtaskRewards?: SubtaskRewardSummary | null;
+  dependencies?: { id: string; title: string }[];
   id: string;
   title: string;
   description: string;
@@ -1230,6 +1272,7 @@ export interface Task {
   dueAt: string | null; // ISO string
   completedAt?: string | null; // ISO string
   subtasks: Subtask[];
+  subtaskActivity?: SubtaskActivity[];
   recurrenceRule: RecurrenceRule;
   recurringTaskId: string | null; // ID of the original recurring task if this is an instance
   clarityRating: number | null;
@@ -1705,6 +1748,7 @@ export interface Notification {
   relatedRewardId: string | null;
   createdAt: string; // ISO string
   source?: 'api' | 'local';
+  alertKind?: string | null;
 }
 
 export type NotificationModule = 'tasks' | 'tickets' | 'users' | 'departments' | 'comments' | 'chat';
@@ -1720,6 +1764,7 @@ export interface ChatMember {
   name: string;
   email: string;
   avatarUrl?: string | null;
+  avatarFrame?: string | null;
   title?: string | null;
   departmentName?: string | null;
   accountStatus: UserStatus;
@@ -1799,6 +1844,7 @@ export interface ChatDirectoryUser {
   name: string;
   email: string;
   avatarUrl?: string | null;
+  avatarFrame?: string | null;
   presence: 'ONLINE' | 'AWAY' | 'OFFLINE';
   lastSeenAt?: string | null;
   roleName?: string | null;
@@ -1869,6 +1915,12 @@ export interface NotificationPreference {
   module: NotificationModule;
   pushEnabled: boolean;
   updatedAt?: string | null;
+  soundEnabled?: boolean;
+  nearDeadlineHours?: number;
+  productiveCapacityHours?: number | null;
+  overtimeThresholdMinutes?: number;
+  quietStart?: string | null;
+  quietEnd?: string | null;
 }
 
 
@@ -1919,6 +1971,7 @@ export interface BackupTask {
 }
 
 export interface BackupUser {
+  profileBio?: string | null;
   id: string;
   name: string;
   email: string;

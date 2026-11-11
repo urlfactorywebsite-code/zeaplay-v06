@@ -1,0 +1,50 @@
+{
+  "scope": "Source/sanitized fixtures only; not deployed",
+  "postgres_focused": {
+    "total": 38,
+    "passed": 38,
+    "failed": 0,
+    "skipped": 0
+  },
+  "sqlite_integration_and_regression": {
+    "total": 82,
+    "passed": 81,
+    "failed": 0,
+    "skipped": 1
+  },
+  "postgres_concurrent_edit": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0
+  },
+  "frontend_tests": {
+    "passed": 65,
+    "failed": 0
+  },
+  "frontend_build": "PASS",
+  "browser_assertions": {
+    "total": 73,
+    "all_passed": true
+  },
+  "accessibility": {
+    "engine": "axe-core 4.14.0",
+    "scans": 14,
+    "automatic_violations": 0,
+    "manual_review": [
+      "color contrast on gradient/partially obscured surfaces",
+      "real assistive devices and all themes"
+    ]
+  },
+  "typescript": {
+    "status": "FAIL - pre-existing",
+    "baseline": 112,
+    "final": 112,
+    "added": 0,
+    "removed": 0
+  },
+  "scoped_lint_syntax_hashes": "PASS",
+  "whole_backend": "NOT RUN; prior unrelated SQLite collection failures outside scope",
+  "production_deployment": "NOT RUN",
+  "cleanup": "PASS: owned PostgreSQL removed; final StrictMode Vite cleanup verified separately"
+}

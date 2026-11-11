@@ -1,3 +1,4 @@
+import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';
 import api from '../services/api';
@@ -144,6 +145,7 @@ const MediaLibraryPage: React.FC = () => {
   const [providerStatuses, setProviderStatuses] = useState<Partial<Record<StorageProvider, MediaProviderStatus>>>({});
   const [busyProvider, setBusyProvider] = useState<StorageProvider | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  useUnsavedChanges(uploadQueue.some((task) => task.status === 'pending' || task.status === 'uploading'));
 
   useEffect(() => {
     const timeout = setTimeout(() => setSearchQuery(searchInput), 300);
@@ -269,21 +271,24 @@ const MediaLibraryPage: React.FC = () => {
   const handleDelete = async (mediaId: string) => {
     if (!canDelete) {
       setError('Only the Owner role can delete media files.');
-      return;
+      return false;
     }
-    if (!window.confirm('Delete this file?')) return;
+    if (!window.confirm('Delete this file?')) return false;
     try {
       await api.deleteMedia(mediaId);
       setItems((prev) => prev.filter((item) => item.id !== mediaId));
       setTotal((prev) => Math.max(0, prev - 1));
       setSelected((prev) => (prev?.id === mediaId ? null : prev));
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete media');
+      return false;
     }
   };
 
   const handleCopyUrl = async (item: MediaItem) => {
-    await navigator.clipboard.writeText(item.readUrl);
+    try { await navigator.clipboard.writeText(item.readUrl); }
+    catch { setError('Unable to copy the URL. Check clipboard permissions.'); return; }
     setCopiedId(item.id);
     setTimeout(() => setCopiedId(null), 1500);
   };

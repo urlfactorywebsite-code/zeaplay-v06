@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .wallet import adjust as adjust_wallet
+
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Iterable, Optional
@@ -321,7 +323,7 @@ def process_badge_event(db: Session, *, event: BadgeEvent) -> None:
                 progress.progress_value = 100
                 progress.progress_state = progress_state
                 progress.updated_at = occurred_at
-                user.points += badge.bonus_xp
+                adjust_wallet(db, user, badge.bonus_xp)
                 notification_service.create_notification(
                     db,
                     user_id=user.id,

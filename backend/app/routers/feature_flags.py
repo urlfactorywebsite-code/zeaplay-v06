@@ -144,6 +144,8 @@ def update_feature_flags(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No feature flags provided.")
     allowed_keys = {entry["key"] for entry in DEFAULT_FEATURE_FLAGS}
     for update in payload.flags:
+        if update.key.startswith("page."):
+            raise HTTPException(422, "Page policies are managed through the tenant-scoped /navigation API.")
         if update.key not in allowed_keys:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

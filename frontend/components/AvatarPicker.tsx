@@ -1,3 +1,5 @@
+import { useAvatarPolicy } from '../hooks/useAvatarPolicy';
+import Avatar from './Avatar';
 import React, { useMemo, useRef, useState } from 'react';
 import { AvatarAsset } from '../types';
 import AvatarCropModal from './AvatarCropModal';
@@ -29,6 +31,7 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
   disabled = false,
   previewClassName = 'border-2 border-indigo-500/60',
 }) => {
+  const avatarPolicy = useAvatarPolicy();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [pendingImage, setPendingImage] = useState<string | null>(null);
   const [isCropOpen, setIsCropOpen] = useState(false);
@@ -43,12 +46,13 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
 
   const handleFileSelection = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
+    event.target.value = '';
     if (!file) {
       return;
     }
 
-    if (!file.type.startsWith('image/')) {
-      setLocalError('Please choose an image file (png, jpg, gif, svg).');
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > avatarPolicy.maxBytes) {
+      setLocalError(`Choose a JPEG, PNG or WebP image up to ${avatarPolicy.maxBytes / 1024 / 1024} MB.`);
       return;
     }
 
@@ -74,14 +78,15 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
 
   const handleCropComplete = async (dataUrl: string) => {
     try {
+      await onCustomAvatarCropped(dataUrl);
       setIsCropOpen(false);
       setPendingImage(null);
-      await onCustomAvatarCropped(dataUrl);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : 'Unable to save avatar');
+      throw err;
     }
   };
 
@@ -108,7 +113,7 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
       <div className="flex items-center gap-4">
         <div className={`h-16 w-16 overflow-hidden rounded-full shadow-inner ${previewClassName}`}>
           {previewUrl ? (
-            <img src={previewUrl} alt="Avatar preview" className="h-full w-full object-cover" />
+            <Avatar user={{ name: "Avatar preview", avatarUrl: previewUrl }} className="h-full w-full" frame={false} />
           ) : (
             <div className="flex h-full w-full items-center justify-center bg-slate-100 text-sm font-medium text-slate-400 dark:bg-slate-800 dark:text-slate-500">
               None
@@ -127,7 +132,7 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept="image/jpeg,image/png,image/webp"
             className="hidden"
             onChange={handleFileSelection}
           />
@@ -158,11 +163,7 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
                     onSelectAvatar(asset);
                   }}
                 >
-                  <img
-                    src={asset.url ?? asset.externalUrl ?? ''}
-                    alt={asset.name}
-                    className="h-full w-full object-cover"
-                  />
+                  <Avatar user={{ name: asset.name, avatarUrl: asset.url }} className="h-full w-full" frame={false} />
                   <span className="absolute bottom-1 left-1 right-1 rounded-full bg-black/50 px-1 text-center text-[10px] font-medium text-white opacity-0 transition group-hover:opacity-100">
                     {asset.name}
                   </span>

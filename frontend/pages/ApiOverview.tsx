@@ -9,7 +9,6 @@ import {
     CodeBracketSquareIcon,
     Cog6ToothIcon,
     DocumentTextIcon,
-    EnvelopeIcon,
     KeyIcon,
     PlusIcon,
     SparklesIcon,
@@ -20,7 +19,13 @@ import MultiSelect from '../components/ui/MultiSelect';
 import api from '../services/mockApi';
 import type { WebhookSubscription, WebhookTestResult } from '../types';
 
-type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
+import { useAuth } from '../hooks/useAuth';
+import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
+import { credentialHistoryKey, readCredentialHistory } from '../utils/credentialHistory';
+import IntegrationSettingsPanel from '../components/IntegrationSettingsPanel';
+import ProviderSettingsPanel from '../components/ProviderSettingsPanel';
+
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 interface EndpointDoc {
     id: string;
@@ -87,7 +92,7 @@ interface WebhookDraft {
     customHeaders: WebhookHeaderInput[];
 }
 
-const KEY_HISTORY_STORAGE_KEY = 'zea-play::bearer-key-history';
+
 const MAX_KEY_HISTORY = 10;
 const IS_DEV_MODE = import.meta.env.MODE === 'development';
 
@@ -1500,6 +1505,7 @@ const scopeLabel = (scopeId: string): string => {
 };
 
 const ApiOverview: React.FC = () => {
+    const { user } = useAuth();
     const [stats, setStats] = useState({
         totalApps: 0,
         totalKeys: 0,
@@ -1507,7 +1513,7 @@ const ApiOverview: React.FC = () => {
         activeKeys: 0,
     });
     const [activeTab, setActiveTab] = useState<
-        'overview' | 'documentation' | 'token' | 'smtp' | 'oauth' | 'webhooks'
+        'overview' | 'documentation' | 'token' | 'smtp' | 'oauth' | 'webhooks' | 'provider'
     >('overview');
 
     const defaultBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'https://playapi.zeacrm.com/';
@@ -1530,18 +1536,14 @@ const ApiOverview: React.FC = () => {
             return [];
         }
         try {
-            const stored = window.localStorage.getItem(KEY_HISTORY_STORAGE_KEY);
-            if (!stored) {
-                return [];
-            }
-            const parsed = JSON.parse(stored) as unknown;
+            const parsed = readCredentialHistory(user!.id, window.localStorage, window.sessionStorage);
             if (!Array.isArray(parsed)) {
                 return [];
             }
             return parsed
                 .filter(
                     (item): item is Record<string, unknown> =>
-                        typeof item === 'object' && item !== null && typeof item.id === 'string' && typeof item.key === 'string',
+                        typeof item === 'object' && item !== null && 'id' in item && typeof item.id === 'string' && 'key' in item && typeof item.key === 'string',
                 )
                 .map((item) => ({
                     id: item.id as string,
@@ -1575,6 +1577,16 @@ const ApiOverview: React.FC = () => {
     const [isTestingWebhook, setIsTestingWebhook] = useState(false);
     const [testEventName, setTestEventName] = useState('');
     const [testResult, setTestResult] = useState<WebhookTestResult | null>(null);
+    const draftSignature = (draft: WebhookDraft) => JSON.stringify({
+        ...draft, customHeaders: draft.customHeaders.map(({ key, value }) => ({ key, value })),
+    });
+    const [savedWebhookDraft, setSavedWebhookDraft] = useState(() => draftSignature(buildEmptyWebhookDraft()));
+    const tokenSignature = (overrides: Partial<{ tokenName: string; baseUrl: string; selectedScopes: string[] }> = {}) => JSON.stringify({
+        tokenName, baseUrl, selectedScopes, expiryPresetId, customExpiryAt, customExpiryMinutes, ...overrides,
+    });
+    const [tokenDraftBaseline, setTokenDraftBaseline] = useState(() => tokenSignature());
+    const confirmDiscard = useUnsavedChanges(draftSignature(webhookDraft) !== savedWebhookDraft || tokenSignature() !== tokenDraftBaseline || isSavingWebhook || isGenerating);
+
     const handleSelectAllScopes = () => setSelectedScopes(ALL_SCOPES.map((scope) => scope.id));
     const handleClearScopes = () => setSelectedScopes([]);
 
@@ -1642,8 +1654,8 @@ const ApiOverview: React.FC = () => {
         if (typeof window === 'undefined') {
             return;
         }
-        window.localStorage.setItem(KEY_HISTORY_STORAGE_KEY, JSON.stringify(keyHistory));
-    }, [keyHistory]);
+        try { window.sessionStorage.setItem(credentialHistoryKey(user!.id), JSON.stringify(keyHistory)); } catch { /* storage may be unavailable */ }
+    }, [keyHistory, user?.id]);
 
     useEffect(() => {
         if (!hasHydratedFromHistory && keyHistory.length > 0) {
@@ -1653,6 +1665,7 @@ const ApiOverview: React.FC = () => {
             setTokenName(firstRecord.label);
             setSelectedScopes(firstRecord.scopes);
             setBaseUrl(firstRecord.baseUrl);
+            setTokenDraftBaseline(tokenSignature({ tokenName: firstRecord.label, baseUrl: firstRecord.baseUrl, selectedScopes: firstRecord.scopes }));
             setHasHydratedFromHistory(true);
         }
     }, [keyHistory, hasHydratedFromHistory]);
@@ -1685,14 +1698,18 @@ const ApiOverview: React.FC = () => {
 
     const handleSelectWebhook = (webhook: WebhookSubscription) => {
         setActiveWebhookId(webhook.id);
-        setWebhookDraft(buildWebhookDraftFrom(webhook));
+        const draft = buildWebhookDraftFrom(webhook);
+        setWebhookDraft(draft);
+        setSavedWebhookDraft(draftSignature(draft));
         setTestEventName(webhook.subscribedEvents[0] ?? '');
         setTestResult(null);
     };
 
     const handleNewWebhook = () => {
         setActiveWebhookId(null);
-        setWebhookDraft(buildEmptyWebhookDraft());
+        const draft = buildEmptyWebhookDraft();
+        setWebhookDraft(draft);
+        setSavedWebhookDraft(draftSignature(draft));
         setTestEventName('');
         setTestResult(null);
     };
@@ -2040,6 +2057,7 @@ const ApiOverview: React.FC = () => {
 
     const handleLoadStoredKey = (record: GeneratedKeyRecord) => {
         setTokenName(record.label);
+        setTokenDraftBaseline(tokenSignature({ tokenName: record.label, baseUrl: record.baseUrl, selectedScopes: record.scopes }));
         setBaseUrl(record.baseUrl);
         setSelectedScopes(record.scopes);
         setGeneratedKey(record.key);
@@ -2135,12 +2153,13 @@ const ApiOverview: React.FC = () => {
                 baseUrl,
                 createdAt: response.issued_at ?? new Date().toISOString(),
                 expiresAt: response.expires_at,
-                subject: response.subject,
+                subject: user!.id,
             };
             setGeneratedKey(record.key);
             setActiveKeyId(record.id);
             setHasHydratedFromHistory(true);
             rememberKey(record);
+            setTokenDraftBaseline(tokenSignature());
         } catch (error) {
             console.error('Failed to generate bearer key', error);
             if (error instanceof Error) {
@@ -2176,11 +2195,12 @@ const ApiOverview: React.FC = () => {
                             { id: 'webhooks', label: 'Webhooks' },
                             { id: 'smtp', label: 'SMTP' },
                             { id: 'oauth', label: 'OAuth' },
+                            { id: 'provider', label: 'AI provider' },
                         ].map((tab) => (
                             <button
                                 key={tab.id}
                                 type="button"
-                                onClick={() => setActiveTab(tab.id as typeof activeTab)}
+                                onClick={() => { if (tab.id === activeTab) return; if (['smtp', 'oauth', 'provider'].includes(activeTab) && !confirmDiscard()) return; setActiveTab(tab.id as typeof activeTab); }}
                                 className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
                                     activeTab === tab.id
                                         ? 'bg-blue-600 text-white shadow'
@@ -2192,6 +2212,9 @@ const ApiOverview: React.FC = () => {
                         ))}
                     </div>
                 </header>
+
+                {(activeTab === 'smtp' || activeTab === 'oauth') && <IntegrationSettingsPanel key={activeTab} kind={activeTab} />}
+                {activeTab === 'provider' && <ProviderSettingsPanel />}
 
                 {/* Overview Tab */}
                 {activeTab === 'overview' && (
@@ -2539,7 +2562,7 @@ const ApiOverview: React.FC = () => {
                                     </div>
                                     <button
                                         type="button"
-                                        onClick={handleNewWebhook}
+                                        onClick={() => { if (confirmDiscard()) handleNewWebhook(); }}
                                         className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white shadow hover:bg-blue-500"
                                     >
                                         <PlusIcon className="h-4 w-4" />
@@ -2573,7 +2596,7 @@ const ApiOverview: React.FC = () => {
                                                     <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                                                         <button
                                                             type="button"
-                                                            onClick={() => handleSelectWebhook(webhook)}
+                                                            onClick={() => { if (confirmDiscard()) handleSelectWebhook(webhook); }}
                                                             className="flex-1 text-left space-y-2"
                                                         >
                                                             <div className="flex items-center gap-2">

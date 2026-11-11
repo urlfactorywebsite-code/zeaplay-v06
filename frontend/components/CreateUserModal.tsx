@@ -1,3 +1,4 @@
+import Avatar from './Avatar';
 import { useState, useMemo, useEffect, useCallback } from "react";
 import api from "../services/mockApi";
 import { Department, Role, AvatarAsset } from "../types";
@@ -192,6 +193,7 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ isOpen, onClose, onUs
     }), [themeVariables, theme]);
 
     const roleOptions = useMemo(() => {
+        if (currentUser?.role === Role.MANAGER) return [{ id: Role.USER, name: 'User' }];
         const options = [
             { id: Role.USER, name: 'User' },
             { id: Role.ADMIN, name: 'Admin' },
@@ -463,11 +465,7 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ isOpen, onClose, onUs
                                                             className={`flex h-12 w-12 items-center justify-center overflow-hidden rounded-full bg-white shadow-sm dark:bg-slate-900 ${frameClass}`}
                                                         >
                                                             {(avatarPreview || customAvatarDataUrl) ? (
-                                                                <img
-                                                                    src={avatarPreview || customAvatarDataUrl}
-                                                                    alt="Avatar frame preview"
-                                                                    className="h-full w-full object-cover"
-                                                                />
+                                                                <Avatar user={{ name: "Frame preview", avatarUrl: avatarPreview }} className="h-full w-full" frame={false} />
                                                                 ) : (
 
                                                                 <span className="text-[10px] uppercase tracking-[0.25em] text-slate-400 dark:text-slate-500">

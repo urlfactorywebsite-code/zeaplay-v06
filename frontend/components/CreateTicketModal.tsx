@@ -105,6 +105,8 @@ const CreateTicketModal: React.FC<CreateTicketModalProps> = ({
       activeUsers.map((candidate) => ({
         id: candidate.id,
         name: candidate.name,
+        avatarFrame: candidate.avatarFrame,
+        role: candidate.role,
         avatarUrl: getUserAvatarUrl(candidate) ?? undefined,
         description: candidate.role.toUpperCase(),
       })),

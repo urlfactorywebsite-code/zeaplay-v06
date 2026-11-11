@@ -1,3 +1,4 @@
+import Avatar from './Avatar';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../services/mockApi';
 import { User, Department, AvatarAsset } from '../types';
@@ -24,6 +25,7 @@ const EditUserModal: React.FC<EditUserModalProps> = ({
 }) => {
   const { user: currentUser } = useAuth();
 
+  const [profileVersion, setProfileVersion] = useState(user.updatedAt);
   const [name, setName] = useState(user.name);
   const [employerId, setEmployerId] = useState(user.employerId || '');
   const [department, setDepartment] = useState(user.department);
@@ -38,6 +40,7 @@ const EditUserModal: React.FC<EditUserModalProps> = ({
   const [avatarUploading, setAvatarUploading] = useState(false);
 
   useEffect(() => {
+    setProfileVersion(user.updatedAt);
     setName(user.name);
     setEmployerId(user.employerId || '');
     setDepartment(user.department);
@@ -63,11 +66,13 @@ const EditUserModal: React.FC<EditUserModalProps> = ({
       setError('');
       setAvatarUploading(true);
       const updatedUser = await api.uploadUserAvatar(user.id, dataUrl);
+      setProfileVersion(updatedUser.updatedAt);
       setAvatarAssetId(updatedUser.avatarAssetId ?? null);
       setAvatarPreview(getUserAvatarUrl(updatedUser) ?? dataUrl);
       setAvatarFrame(updatedUser.avatarFrame ?? avatarFrame);
     } catch (uploadError: any) {
       setError(uploadError?.message || 'Failed to update avatar. Please try again.');
+      throw uploadError;
     } finally {
       setAvatarUploading(false);
     }
@@ -108,7 +113,7 @@ const EditUserModal: React.FC<EditUserModalProps> = ({
 
       await api.updateUser(
         user.id,
-        { name, employerId, department: finalDepartment, avatarAssetId, avatarFrame },
+        { name, employerId, department: finalDepartment, avatarAssetId, avatarFrame, updatedAt: profileVersion },
         currentUser.id
       );
 
@@ -225,7 +230,7 @@ const EditUserModal: React.FC<EditUserModalProps> = ({
                             >
                               <div className={`flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-white shadow-sm dark:bg-slate-900 ${frameClass}`}>
                                 {avatarPreview ? (
-                                  <img src={avatarPreview} alt="Avatar frame preview" className="h-full w-full object-cover" />
+                                  <Avatar user={{ name: "Frame preview", avatarUrl: avatarPreview }} className="h-full w-full" frame={false} />
                                 ) : (
                                   <span className="text-[8px] uppercase tracking-[0.25em] text-gray-400 dark:text-gray-500">Frame</span>
                                 )}

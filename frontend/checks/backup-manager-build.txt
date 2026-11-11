@@ -1,0 +1,68 @@
+
+> vee-task-manager@0.0.0 build
+> vite build
+
+vite v6.4.2 building for production...
+transforming...
+✓ 4467 modules transformed.
+node.exe : node_modules/lottie-web/build/player/lottie.js (14422:32): Use of eval in 
+"node_modules/lottie-web/build/player/lottie.js" is strongly discouraged as it poses security risks and may cause 
+issues with minification.
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Users\Lenovo\AppData\Roaming ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (node_modules/lo...h minification.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+rendering chunks...
+computing gzip size...
+dist/index.html                                 15.97 kB │ gzip:   3.88 kB
+dist/assets/index-ixljioey.css                 115.90 kB │ gzip:  21.14 kB
+dist/assets/geminiClient-B2wKLvlU.js             0.13 kB │ gzip:   0.13 kB
+dist/assets/shield-check-Ilk7MvDW.js             0.49 kB │ gzip:   0.36 kB
+dist/assets/ClockIcon-DwLle16E.js                0.50 kB │ gzip:   0.37 kB
+dist/assets/TaskPriorityBadge-Dcw01kHG.js        0.66 kB │ gzip:   0.43 kB
+dist/assets/FunnelIcon-BQp_MVwO.js               0.76 kB │ gzip:   0.49 kB
+dist/assets/PlusIcon-C5QGZJq4.js                 0.96 kB │ gzip:   0.41 kB
+dist/assets/useUnsavedChanges-KnYmxW7q.js        0.97 kB │ gzip:   0.55 kB
+dist/assets/taskCalendarDates-CkSbRaUp.js        1.09 kB │ gzip:   0.64 kB
+dist/assets/themeTokens-Ced2p2JR.js              1.16 kB │ gzip:   0.54 kB
+dist/assets/Badge-_lF4ear-.js                    1.43 kB │ gzip:   0.68 kB
+dist/assets/x-DC2BmPQw.js                        1.88 kB │ gzip:   0.63 kB
+dist/assets/SingleSelect-CZs4GKPK.js             1.94 kB │ gzip:   1.05 kB
+dist/assets/levelsConfigStorage-ChgEJdj-.js      4.73 kB │ gzip:   1.78 kB
+dist/assets/Settings-BLiF7j2e.js                 5.65 kB │ gzip:   2.18 kB
+dist/assets/SupportFormModal-Dpp_6LL0.js         8.13 kB │ gzip:   2.76 kB
+dist/assets/useQuery-CDWODL48.js                 9.57 kB │ gzip:   3.40 kB
+dist/assets/AllTasks-vikxqFmx.js                 9.81 kB │ gzip:   3.97 kB
+dist/assets/MasterControl-Degv5_Zv.js           11.61 kB │ gzip:   3.17 kB
+dist/assets/SidebarManagement-fWYzh_nF.js       15.43 kB │ gzip:   5.62 kB
+dist/assets/Logs-Ds5HHXUu.js                    15.83 kB │ gzip:   4.35 kB
+dist/assets/GanttView-DpaUK1Fm.js               17.11 kB │ gzip:   5.33 kB
+dist/assets/Dashboard-BMnM8B2G.js               21.08 kB │ gzip:   6.43 kB
+dist/assets/PointsTableSettings-DBr9YUZe.js     23.43 kB │ gzip:   6.59 kB
+dist/assets/ToolLibrary-Dx9GOPY0.js             24.75 kB │ gzip:   5.59 kB
+dist/assets/RewardManagement-DpRiZgZh.js        25.77 kB │ gzip:   6.51 kB
+dist/assets/Reports-BVzCdwt1.js                 27.27 kB │ gzip:   6.97 kB
+dist/assets/TemplateEditor-BCv23Ila.js          30.86 kB │ gzip:   8.65 kB
+dist/assets/ProfileSettings-CTGx0eyl.js         32.19 kB │ gzip:   8.59 kB
+dist/assets/CalendarView-CNO_vRJn.js            36.70 kB │ gzip:  10.15 kB
+dist/assets/KanbanBoard-CV5fqe-9.js             38.68 kB │ gzip:  10.76 kB
+dist/assets/LevelsManager-DbSSxa-f.js           40.66 kB │ gzip:   8.54 kB
+dist/assets/AvatarCropModal-BSmm2lsS.js         52.53 kB │ gzip:  16.22 kB
+dist/assets/CreateTaskModal-Cs8DEm9E.js         55.23 kB │ gzip:  15.87 kB
+dist/assets/Chat-CZmDmA1n.js                    61.01 kB │ gzip:  16.14 kB
+dist/assets/Tasks-CSdu-kE_.js                   71.56 kB │ gzip:  17.39 kB
+dist/assets/Achievements-DvOPFcEO.js            77.46 kB │ gzip:  19.58 kB
+dist/assets/MediaLibrary-BKfiQYri.js            85.74 kB │ gzip:  24.85 kB
+dist/assets/TicketPage-CG2CWX0P.js              88.72 kB │ gzip:  20.56 kB
+dist/assets/ApiOverview-Bca1TRwg.js             89.66 kB │ gzip:  20.38 kB
+dist/assets/Users-eJTatg5u.js                  174.28 kB │ gzip:  40.20 kB
+dist/assets/index-eWBjlvn8.js                3,387.49 kB │ gzip: 958.34 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: 
+https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 17.40s

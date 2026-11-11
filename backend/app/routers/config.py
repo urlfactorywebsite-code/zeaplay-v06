@@ -7,7 +7,7 @@ from typing import List
 
 from .. import models, schemas
 from ..database import get_db
-from ..dependencies import get_current_active_user, get_current_admin, get_current_owner
+from ..dependencies import get_current_api_admin, get_current_owner
 from ..email_utils import EmailDeliveryError, send_email_with_config
 from ..integrations import trigger_n8n_event
 from ..services import audit_logger
@@ -42,20 +42,24 @@ DEFAULT_EMAIL_TEMPLATES: dict[str, dict[str, str]] = {
 }
 
 
-def _get_or_create_smtp(db: Session) -> models.SmtpConfig:
-    smtp = db.get(models.SmtpConfig, 1)
+def _tenant_query(db: Session, model, tenant_id):
+    return db.query(model).filter(model.tenant_id == str(tenant_id))
+
+
+def _get_or_create_smtp(db: Session, tenant_id: str) -> models.SmtpConfig:
+    smtp = _tenant_query(db, models.SmtpConfig, tenant_id).first()
     if not smtp:
-        smtp = models.SmtpConfig(id=1, host="smtp.example.com", port=587, username="noreply@example.com")
+        smtp = models.SmtpConfig(tenant_id=str(tenant_id), host="smtp.example.com", port=587, username="noreply@example.com")
         db.add(smtp)
         db.commit()
         db.refresh(smtp)
     return smtp
 
 
-def _get_or_create_api_config(db: Session) -> models.ApiConfig:
-    api_config = db.get(models.ApiConfig, 1)
+def _get_or_create_api_config(db: Session, tenant_id: str) -> models.ApiConfig:
+    api_config = _tenant_query(db, models.ApiConfig, tenant_id).first()
     if not api_config:
-        api_config = models.ApiConfig(id=1, provider="Google Gemini", api_key=None)
+        api_config = models.ApiConfig(tenant_id=str(tenant_id), provider="Google Gemini", api_key=None)
         db.add(api_config)
         db.commit()
         db.refresh(api_config)
@@ -77,19 +81,20 @@ def _get_or_create_points_config(db: Session) -> tuple[models.PointsTableConfig,
     return points_config, created
 
 
-def _ensure_email_templates(db: Session) -> None:
+def _ensure_email_templates(db: Session, tenant_id: str) -> None:
     inspector = inspect(db.bind)
     if "email_templates" not in inspector.get_table_names():
         models.EmailTemplate.__table__.create(bind=db.bind, checkfirst=True)
     existing = {
         template.notification_type: template
-        for template in db.query(models.EmailTemplate).all()
+        for template in _tenant_query(db, models.EmailTemplate, tenant_id).all()
     }
     created = False
     for notification_type, values in DEFAULT_EMAIL_TEMPLATES.items():
         if notification_type in existing:
             continue
         template = models.EmailTemplate(
+            tenant_id=str(tenant_id),
             notification_type=notification_type,
             subject=values["subject"],
             body=values["body"],
@@ -109,18 +114,18 @@ def _ensure_multiple_smtp_schema(db: Session) -> None:
 @router.get("/smtp", response_model=schemas.SmtpConfigRead)
 def get_smtp_config(
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_admin),
+    current_user: models.User = Depends(get_current_api_admin),
 ):
-    return _get_or_create_smtp(db)
+    return _get_or_create_smtp(db, str(current_user.tenant_id))
 
 
 @router.patch("/smtp", response_model=schemas.SmtpConfigRead)
 def update_smtp_config(
     payload: schemas.SmtpConfigUpdate,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_admin),
+    current_user: models.User = Depends(get_current_api_admin),
 ):
-    smtp = _get_or_create_smtp(db)
+    smtp = _get_or_create_smtp(db, str(current_user.tenant_id))
     if payload.host is not None:
         smtp.host = payload.host
     if payload.port is not None:
@@ -138,6 +143,8 @@ def update_smtp_config(
     audit_logger.log_event(
         audit_logger.AuditLogInput(
             action="SMTP_CONFIG_UPDATED",
+            actor_id=str(current_user.id), actor_role=current_user.role.value,
+            entity_type="api_configuration", entity_id=str(current_user.tenant_id),
             category=models.AuditLogCategoryEnum.SYSTEM,
             source=models.AuditLogSourceEnum.MANUAL,
             metadata={"fields": update_fields},
@@ -147,17 +154,18 @@ def update_smtp_config(
 
 
 @router.get("/api", response_model=schemas.ApiConfigRead)
-def get_api_config(db: Session = Depends(get_db), _: models.User = Depends(get_current_active_user)):
-    return _get_or_create_api_config(db)
+def get_api_config(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_api_admin)):
+    config = _get_or_create_api_config(db, str(current_user.tenant_id))
+    return schemas.ApiConfigRead(provider=config.provider, api_key=config.api_key)
 
 
 @router.patch("/api", response_model=schemas.ApiConfigRead)
 def update_api_config(
     payload: schemas.ApiConfigUpdate,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_admin),
+    current_user: models.User = Depends(get_current_api_admin),
 ):
-    api_config = _get_or_create_api_config(db)
+    api_config = _get_or_create_api_config(db, str(current_user.tenant_id))
     api_config.provider = payload.provider
     api_config.api_key = payload.api_key
     db.commit()
@@ -165,12 +173,35 @@ def update_api_config(
     audit_logger.log_event(
         audit_logger.AuditLogInput(
             action="API_CONFIG_UPDATED",
+            actor_id=str(current_user.id), actor_role=current_user.role.value,
+            entity_type="api_configuration", entity_id=str(current_user.tenant_id),
             category=models.AuditLogCategoryEnum.SYSTEM,
             source=models.AuditLogSourceEnum.MANUAL,
             metadata={"provider": payload.provider},
         )
     )
     return api_config
+
+
+@router.get("/subtask-rewards")
+def get_subtask_reward_policy(db: Session = Depends(get_db), actor: models.User = Depends(get_current_owner)):
+    from ..services import subtask_rewards as rewards
+    row = rewards.policy(db, actor.tenant_id)
+    data = row.reward_policy_data or {} if row else {}
+    return {"enabled": bool(row and row.enabled), "version": row.version if row else 0,
+        "policy_version": rewards.POLICY, "activated_at": row.activated_at if row else None,
+        "bonus_enabled": data.get("bonus_enabled", True), "penalty_enabled": data.get("penalty_enabled", True)}
+
+
+@router.patch("/subtask-rewards")
+def update_subtask_reward_policy(payload: schemas.SubtaskRewardPolicyUpdate,
+    db: Session = Depends(get_db), actor: models.User = Depends(get_current_owner)):
+    from ..services import subtask_rewards as rewards
+    result = rewards.configure(db, actor=actor, **payload.model_dump())
+    db.commit()
+    from .tasks import _invalidate_task_cache
+    _invalidate_task_cache(actor, action="subtask_policy_updated")
+    return result
 
 
 @router.get("/points", response_model=schemas.PointsTableConfigRead)
@@ -220,20 +251,20 @@ def update_points_table_config(
 @router.get("/smtp/multiple", response_model=List[schemas.MultipleSmtpConfigRead])
 def get_multiple_smtp_configs(
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_admin),
+    current_user: models.User = Depends(get_current_api_admin),
 ):
     _ensure_multiple_smtp_schema(db)
-    return db.query(models.MultipleSmtpConfig).all()
+    return _tenant_query(db, models.MultipleSmtpConfig, current_user.tenant_id).all()
 
 
 @router.post("/smtp/multiple", response_model=schemas.MultipleSmtpConfigRead)
 def create_multiple_smtp_config(
     payload: schemas.MultipleSmtpConfigCreate,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_admin),
+    current_user: models.User = Depends(get_current_api_admin),
 ):
     _ensure_multiple_smtp_schema(db)
-    smtp_config = models.MultipleSmtpConfig(**payload.model_dump())
+    smtp_config = models.MultipleSmtpConfig(tenant_id=str(current_user.tenant_id), **payload.model_dump())
     db.add(smtp_config)
     db.commit()
     db.refresh(smtp_config)
@@ -245,10 +276,10 @@ def update_multiple_smtp_config(
     config_id: str,
     payload: schemas.MultipleSmtpConfigUpdate,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_admin),
+    current_user: models.User = Depends(get_current_api_admin),
 ):
     _ensure_multiple_smtp_schema(db)
-    smtp_config = db.get(models.MultipleSmtpConfig, config_id)
+    smtp_config = _tenant_query(db, models.MultipleSmtpConfig, current_user.tenant_id).filter(models.MultipleSmtpConfig.id == config_id).first()
     if not smtp_config:
         raise HTTPException(status_code=404, detail="SMTP config not found")
 
@@ -264,10 +295,10 @@ def update_multiple_smtp_config(
 def delete_multiple_smtp_config(
     config_id: str,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_admin),
+    current_user: models.User = Depends(get_current_api_admin),
 ):
     _ensure_multiple_smtp_schema(db)
-    smtp_config = db.get(models.MultipleSmtpConfig, config_id)
+    smtp_config = _tenant_query(db, models.MultipleSmtpConfig, current_user.tenant_id).filter(models.MultipleSmtpConfig.id == config_id).first()
     if not smtp_config:
         raise HTTPException(status_code=404, detail="SMTP config not found")
 
@@ -281,16 +312,16 @@ def test_multiple_smtp_config(
     config_id: str,
     payload: schemas.SmtpTestPayload,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_admin),
+    current_user: models.User = Depends(get_current_api_admin),
 ):
     _ensure_multiple_smtp_schema(db)
-    smtp_config = db.get(models.MultipleSmtpConfig, config_id)
+    smtp_config = _tenant_query(db, models.MultipleSmtpConfig, current_user.tenant_id).filter(models.MultipleSmtpConfig.id == config_id).first()
     if not smtp_config:
         raise HTTPException(status_code=404, detail="SMTP config not found")
 
-    _ensure_email_templates(db)
+    _ensure_email_templates(db, str(current_user.tenant_id))
     template = (
-        db.query(models.EmailTemplate)
+        _tenant_query(db, models.EmailTemplate, current_user.tenant_id)
         .filter(models.EmailTemplate.notification_type == payload.notification_type)
         .first()
     )
@@ -317,10 +348,10 @@ def test_multiple_smtp_config(
 @router.get("/email-templates", response_model=List[schemas.EmailTemplateRead])
 def list_email_templates(
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_admin),
+    current_user: models.User = Depends(get_current_api_admin),
 ):
-    _ensure_email_templates(db)
-    return db.query(models.EmailTemplate).all()
+    _ensure_email_templates(db, str(current_user.tenant_id))
+    return _tenant_query(db, models.EmailTemplate, current_user.tenant_id).all()
 
 
 @router.put("/email-templates/{notification_type}", response_model=schemas.EmailTemplateRead)
@@ -328,11 +359,11 @@ def update_email_template(
     notification_type: str,
     payload: schemas.EmailTemplateUpdate,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_admin),
+    current_user: models.User = Depends(get_current_api_admin),
 ):
-    _ensure_email_templates(db)
+    _ensure_email_templates(db, str(current_user.tenant_id))
     template = (
-        db.query(models.EmailTemplate)
+        _tenant_query(db, models.EmailTemplate, current_user.tenant_id)
         .filter(models.EmailTemplate.notification_type == notification_type)
         .first()
     )
@@ -345,6 +376,7 @@ def update_email_template(
                 detail="Subject and body are required for new templates.",
             )
         template = models.EmailTemplate(
+            tenant_id=str(current_user.tenant_id),
             notification_type=notification_type,
             subject=defaults["subject"] if defaults else payload.subject or "",
             body=defaults["body"] if defaults else payload.body or "",
@@ -413,20 +445,21 @@ def _ensure_oauth_schema(db: Session) -> None:
 @router.get("/oauth", response_model=List[schemas.OAuthConfigRead])
 def list_oauth_configs(
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_admin),
+    current_user: models.User = Depends(get_current_api_admin),
 ):
     _ensure_oauth_schema(db)
-    return db.query(models.OAuthConfig).order_by(models.OAuthConfig.created_at.desc()).all()
+    return _tenant_query(db, models.OAuthConfig, current_user.tenant_id).order_by(models.OAuthConfig.created_at.desc()).all()
 
 
 @router.post("/oauth", response_model=schemas.OAuthConfigRead, status_code=status.HTTP_201_CREATED)
 def create_oauth_config(
     payload: schemas.OAuthConfigCreate,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_admin),
+    current_user: models.User = Depends(get_current_api_admin),
 ):
     _ensure_oauth_schema(db)
     oauth_config = models.OAuthConfig(
+        tenant_id=str(current_user.tenant_id),
         name=payload.name,
         redirect_url=payload.redirect_url,
         scopes=payload.scopes,
@@ -446,10 +479,10 @@ def update_oauth_config(
     config_id: int,
     payload: schemas.OAuthConfigUpdate,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_admin),
+    current_user: models.User = Depends(get_current_api_admin),
 ):
     _ensure_oauth_schema(db)
-    oauth_config = db.get(models.OAuthConfig, config_id)
+    oauth_config = _tenant_query(db, models.OAuthConfig, current_user.tenant_id).filter(models.OAuthConfig.id == config_id).first()
     if not oauth_config:
         raise HTTPException(status_code=404, detail="OAuth configuration not found")
 
@@ -466,10 +499,10 @@ def rotate_oauth_credentials(
     config_id: int,
     payload: schemas.OAuthCredentialsRotate,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_admin),
+    current_user: models.User = Depends(get_current_api_admin),
 ):
     _ensure_oauth_schema(db)
-    oauth_config = db.get(models.OAuthConfig, config_id)
+    oauth_config = _tenant_query(db, models.OAuthConfig, current_user.tenant_id).filter(models.OAuthConfig.id == config_id).first()
     if not oauth_config:
         raise HTTPException(status_code=404, detail="OAuth configuration not found")
 
@@ -483,10 +516,10 @@ def rotate_oauth_credentials(
 def delete_oauth_config(
     config_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_admin),
+    current_user: models.User = Depends(get_current_api_admin),
 ) -> None:
     _ensure_oauth_schema(db)
-    oauth_config = db.get(models.OAuthConfig, config_id)
+    oauth_config = _tenant_query(db, models.OAuthConfig, current_user.tenant_id).filter(models.OAuthConfig.id == config_id).first()
     if not oauth_config:
         raise HTTPException(status_code=404, detail="OAuth configuration not found")
 

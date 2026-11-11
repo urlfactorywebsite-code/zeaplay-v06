@@ -39,12 +39,15 @@ def _sorted_by_updated(configs: list[models.MultipleSmtpConfig]) -> list[models.
 def resolve_smtp_config(
     db: Session,
     notification_type: Optional[str] = None,
+    *, tenant_id: str | None = None,
 ) -> Optional[SmtpConfigLike]:
+    if not tenant_id:
+        return None
     candidates: list[models.MultipleSmtpConfig] = []
     if notification_type:
         candidates = [
             config
-            for config in db.query(models.MultipleSmtpConfig).all()
+            for config in db.query(models.MultipleSmtpConfig).filter(models.MultipleSmtpConfig.tenant_id == str(tenant_id)).all()
             if notification_type in (config.notification_types or [])
         ]
         candidates = _sorted_by_updated(candidates)
@@ -53,7 +56,7 @@ def resolve_smtp_config(
         if _is_config_complete(candidate):
             return candidate
 
-    primary = db.get(models.SmtpConfig, 1)
+    primary = db.query(models.SmtpConfig).filter(models.SmtpConfig.tenant_id == str(tenant_id)).first()
     if primary and _is_config_complete(primary):
         return primary
 
@@ -143,7 +146,8 @@ def send_notification_email(
 ) -> None:
     """Send an email using the SMTP profile mapped to a notification type."""
 
-    smtp_config = resolve_smtp_config(db, notification_type)
+    recipient = db.query(models.User).filter(models.User.email == to_address).first()
+    smtp_config = resolve_smtp_config(db, notification_type, tenant_id=str(recipient.tenant_id) if recipient else None)
     if not smtp_config:
         raise EmailDeliveryError("SMTP configuration is required")
 

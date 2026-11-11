@@ -1,0 +1,63 @@
+{
+  "baseline-sqlite": {
+    "tests": "52",
+    "errors": "0",
+    "failures": "0",
+    "skipped": "1",
+    "time": "79.235"
+  },
+  "postgres-certified": {
+    "tests": "77",
+    "errors": "0",
+    "failures": "0",
+    "skipped": "0",
+    "time": "120.001"
+  },
+  "sqlite-certified": {
+    "tests": "77",
+    "errors": "0",
+    "failures": "0",
+    "skipped": "1",
+    "time": "128.026"
+  },
+  "activity-regression": {
+    "tests": "36",
+    "errors": "0",
+    "failures": "0",
+    "skipped": "0",
+    "time": "85.656"
+  },
+  "index-burst-postgres": {
+    "tests": "1",
+    "errors": "0",
+    "failures": "0",
+    "skipped": "0",
+    "time": "5.406"
+  },
+  "index-burst-sqlite": {
+    "tests": "1",
+    "errors": "0",
+    "failures": "0",
+    "skipped": "0",
+    "time": "5.006"
+  },
+  "device-fix": {
+    "tests": "4",
+    "errors": "0",
+    "failures": "0",
+    "skipped": "0",
+    "time": "8.840"
+  },
+  "frontend": {
+    "unit_passed": 81,
+    "browser_assertions_passed": 48,
+    "build": "PASS",
+    "build_seconds": 11.49,
+    "typescript": {
+      "baseline": 112,
+      "current": 112,
+      "added": [],
+      "removed": []
+    }
+  }
+}

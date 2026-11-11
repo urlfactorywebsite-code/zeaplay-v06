@@ -1,0 +1,77 @@
+[
+  {
+    "path": "backend/app/main.py",
+    "sha256": "032ca735cac1166acb8e0635164ff046190cb45dc6450b3f9b7376412dcbccf0",
+    "verification_copy_matches": true
+  },
+  {
+    "path": "backend/app/routers/auth.py",
+    "sha256": "11cc9895627db0172f6e7c44100219a06771f0ed2114f4e04912f039c395d16a",
+    "verification_copy_matches": true
+  },
+  {
+    "path": "backend/app/services/audit_logger.py",
+    "sha256": "45fea6b6b79b9dd08a3a29f3d7b1b4cbbbe52a7682ce1e9d3c4ad34e34680a5c",
+    "verification_copy_matches": true
+  },
+  {
+    "path": "backend/app/services/task_events.py",
+    "sha256": "3b5736ba6fda879e02802dec2865b93c94bf94125a990142aec4d8ebe09410f2",
+    "verification_copy_matches": true
+  },
+  {
+    "path": "backend/app/ws/tasks.py",
+    "sha256": "296ff0ce8df232e6eb97af0388d398cdf14436ef0531f9c50617072bace397a0",
+    "verification_copy_matches": true
+  },
+  {
+    "path": "backend/checks/phase7_browser_app.py",
+    "sha256": "e8ff69bbe75056411acfda90ad0b3682e92d4627908d92ae0651161303abdb0b",
+    "verification_copy_matches": true
+  },
+  {
+    "path": "backend/sql/zeaplay_v2_phase7_readiness.sql",
+    "sha256": "5ddf0bdf353d0054204bfaf13fc78935ee4672f6354c37f86f33f8ce43f5e62c",
+    "verification_copy_matches": true
+  },
+  {
+    "path": "backend/tests/conftest.py",
+    "sha256": "2beed32ffd2966ff386e3ca9e361c027f8fe53c9f889217d6f98ef7d730067ca",
+    "verification_copy_matches": true
+  },
+  {
+    "path": "backend/tests/test_navigation_sockets.py",
+    "sha256": "353014355b9ab9356c1595a1df93d35e2d5269caa6c3010fb0610454486d8671",
+    "verification_copy_matches": true
+  },
+  {
+    "path": "backend/tests/test_phase7_migrations.py",
+    "sha256": "9d9265e0305c63bf4a3c751c85f8fcef55e95b3e762b92075b3054375ab4a44f",
+    "verification_copy_matches": true
+  },
+  {
+    "path": "backend/tests/test_phase7_performance.py",
+    "sha256": "0aaba105009b50041e88446847e87754fe730353854b3c09c72779059beb1ab6",
+    "verification_copy_matches": true
+  },
+  {
+    "path": "backend/tests/test_phase7_realtime.py",
+    "sha256": "2e3937d72e53553db28922fd857b443fe11453ccc3cf51036968b23ce0298ca8",
+    "verification_copy_matches": true
+  },
+  {
+    "path": "backend/tests/test_phase7_system.py",
+    "sha256": "e7fd7c0b2490bc624de0a5423744fd9d3da5b72fbc32c190350cab29dcacb542",
+    "verification_copy_matches": true
+  },
+  {
+    "path": "backend/tests/test_subtask_schema_rehearsal.py",
+    "sha256": "b07566361537cae498fd23b8ef24ad158861786653b067f4f80cf6d5ca8328ff",
+    "verification_copy_matches": true
+  },
+  {
+    "path": "frontend/components/Header.tsx",
+    "sha256": "216fc8ce0781cd2f20012881667bba978fa7c4f6c6f6437bdbf6ece9b575632b",
+    "verification_copy_matches": true
+  }
+]

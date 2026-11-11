@@ -7,7 +7,7 @@ export const options = {
 };
 
 export default function () {
-  const baseUrl = __ENV.BASE_URL || 'http://localhost:6211';
+  const baseUrl = __ENV.BASE_URL || 'http://localhost:7211';
   const token = __ENV.TOKEN || '';
   const headers = token ? { Authorization: `Bearer ${token}` } : {};
 

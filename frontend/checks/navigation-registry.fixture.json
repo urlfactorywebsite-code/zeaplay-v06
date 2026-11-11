@@ -1,0 +1,376 @@
+[
+  {
+    "id": "dashboard",
+    "defaultLabel": "Dashboard",
+    "route": "/dashboard",
+    "permittedRoles": [
+      "user",
+      "admin",
+      "manager",
+      "owner"
+    ],
+    "parentId": null,
+    "isSystemProtected": false,
+    "navigationLocation": "sidebar",
+    "desktop": true,
+    "mobile": true,
+    "icon": "dashboard"
+  },
+  {
+    "id": "tasks",
+    "defaultLabel": "All Tasks",
+    "route": "/tasks",
+    "permittedRoles": [
+      "user",
+      "admin",
+      "manager",
+      "owner"
+    ],
+    "parentId": null,
+    "isSystemProtected": false,
+    "navigationLocation": "sidebar",
+    "desktop": true,
+    "mobile": true,
+    "icon": "tasks"
+  },
+  {
+    "id": "tasks.list",
+    "defaultLabel": "All Tasks",
+    "route": "/tasks",
+    "permittedRoles": [
+      "user",
+      "admin",
+      "manager",
+      "owner"
+    ],
+    "parentId": "tasks",
+    "isSystemProtected": true,
+    "navigationLocation": "task-tab",
+    "desktop": true,
+    "mobile": true,
+    "icon": "tasks"
+  },
+  {
+    "id": "kanban",
+    "defaultLabel": "Kanban Board",
+    "route": "/tasks/kanban",
+    "permittedRoles": [
+      "user",
+      "admin",
+      "manager",
+      "owner"
+    ],
+    "parentId": "tasks",
+    "isSystemProtected": false,
+    "navigationLocation": "task-tab",
+    "desktop": true,
+    "mobile": true,
+    "icon": "kanban"
+  },
+  {
+    "id": "gantt",
+    "defaultLabel": "Gantt Chart",
+    "route": "/tasks/gantt",
+    "permittedRoles": [
+      "manager",
+      "admin",
+      "owner"
+    ],
+    "parentId": "tasks",
+    "isSystemProtected": false,
+    "navigationLocation": "task-tab",
+    "desktop": true,
+    "mobile": true,
+    "icon": "gantt"
+  },
+  {
+    "id": "calendar",
+    "defaultLabel": "Calendar",
+    "route": "/tasks/calendar",
+    "permittedRoles": [
+      "user",
+      "admin",
+      "manager",
+      "owner"
+    ],
+    "parentId": "tasks",
+    "isSystemProtected": false,
+    "navigationLocation": "task-tab",
+    "desktop": true,
+    "mobile": true,
+    "icon": "calendar"
+  },
+  {
+    "id": "tickets",
+    "defaultLabel": "Ticket",
+    "route": "/tickets",
+    "permittedRoles": [
+      "user",
+      "admin",
+      "manager",
+      "owner"
+    ],
+    "parentId": null,
+    "isSystemProtected": false,
+    "navigationLocation": "sidebar",
+    "desktop": true,
+    "mobile": true,
+    "icon": "tickets"
+  },
+  {
+    "id": "tool-library",
+    "defaultLabel": "Tool Library",
+    "route": "/tool-library",
+    "permittedRoles": [
+      "user",
+      "admin",
+      "manager",
+      "owner"
+    ],
+    "parentId": null,
+    "isSystemProtected": false,
+    "navigationLocation": "sidebar",
+    "desktop": true,
+    "mobile": true,
+    "icon": "tool-library"
+  },
+  {
+    "id": "users",
+    "defaultLabel": "Users",
+    "route": "/admin/users",
+    "permittedRoles": [
+      "manager",
+      "admin",
+      "owner"
+    ],
+    "parentId": null,
+    "isSystemProtected": false,
+    "navigationLocation": "sidebar",
+    "desktop": true,
+    "mobile": true,
+    "icon": "users"
+  },
+  {
+    "id": "reports",
+    "defaultLabel": "Reports",
+    "route": "/reports",
+    "permittedRoles": [
+      "manager",
+      "admin",
+      "owner"
+    ],
+    "parentId": null,
+    "isSystemProtected": false,
+    "navigationLocation": "sidebar",
+    "desktop": true,
+    "mobile": true,
+    "icon": "reports"
+  },
+  {
+    "id": "achievements",
+    "defaultLabel": "Achievements",
+    "route": "/achievements",
+    "permittedRoles": [
+      "user",
+      "admin",
+      "manager",
+      "owner"
+    ],
+    "parentId": null,
+    "isSystemProtected": false,
+    "navigationLocation": "sidebar",
+    "desktop": true,
+    "mobile": true,
+    "icon": "achievements"
+  },
+  {
+    "id": "settings",
+    "defaultLabel": "Settings",
+    "route": "/settings",
+    "permittedRoles": [
+      "user",
+      "admin",
+      "manager",
+      "owner"
+    ],
+    "parentId": null,
+    "isSystemProtected": true,
+    "navigationLocation": "sidebar",
+    "desktop": true,
+    "mobile": true,
+    "icon": "settings"
+  },
+  {
+    "id": "points",
+    "defaultLabel": "Points",
+    "route": "/admin/points-table",
+    "permittedRoles": [
+      "owner"
+    ],
+    "parentId": "achievements",
+    "isSystemProtected": false,
+    "navigationLocation": "sidebar",
+    "desktop": false,
+    "mobile": true,
+    "icon": "points"
+  },
+  {
+    "id": "templates",
+    "defaultLabel": "Templates",
+    "route": "/template-editor",
+    "permittedRoles": [
+      "owner"
+    ],
+    "parentId": "achievements",
+    "isSystemProtected": false,
+    "navigationLocation": "sidebar",
+    "desktop": false,
+    "mobile": true,
+    "icon": "templates"
+  },
+  {
+    "id": "levels",
+    "defaultLabel": "Levels",
+    "route": "/levels",
+    "permittedRoles": [
+      "user",
+      "admin",
+      "manager",
+      "owner"
+    ],
+    "parentId": "achievements",
+    "isSystemProtected": false,
+    "navigationLocation": "sidebar",
+    "desktop": false,
+    "mobile": true,
+    "icon": "levels"
+  },
+  {
+    "id": "chat",
+    "defaultLabel": "Chat",
+    "route": "/chat",
+    "permittedRoles": [
+      "user",
+      "admin",
+      "manager",
+      "owner"
+    ],
+    "parentId": null,
+    "isSystemProtected": false,
+    "navigationLocation": "sidebar",
+    "desktop": false,
+    "mobile": false,
+    "icon": "chat"
+  },
+  {
+    "id": "settings.profile",
+    "defaultLabel": "General / Profile",
+    "route": "/settings/profile",
+    "permittedRoles": [
+      "user",
+      "admin",
+      "manager",
+      "owner"
+    ],
+    "parentId": "settings",
+    "isSystemProtected": true,
+    "navigationLocation": "settings-tab",
+    "desktop": true,
+    "mobile": true,
+    "icon": "settings.profile"
+  },
+  {
+    "id": "settings.support",
+    "defaultLabel": "Support",
+    "route": "/settings/support",
+    "permittedRoles": [
+      "user",
+      "admin",
+      "manager",
+      "owner"
+    ],
+    "parentId": "settings",
+    "isSystemProtected": false,
+    "navigationLocation": "settings-tab",
+    "desktop": true,
+    "mobile": true,
+    "icon": "settings.support"
+  },
+  {
+    "id": "settings.master-control",
+    "defaultLabel": "Master Control",
+    "route": "/settings/master-control",
+    "permittedRoles": [
+      "owner"
+    ],
+    "parentId": "settings",
+    "isSystemProtected": false,
+    "navigationLocation": "settings-tab",
+    "desktop": true,
+    "mobile": true,
+    "icon": "settings.master-control"
+  },
+  {
+    "id": "settings.api",
+    "defaultLabel": "API",
+    "route": "/settings/api",
+    "permittedRoles": [
+      "owner",
+      "admin"
+    ],
+    "parentId": "settings",
+    "isSystemProtected": false,
+    "navigationLocation": "settings-tab",
+    "desktop": true,
+    "mobile": true,
+    "icon": "settings.api"
+  },
+  {
+    "id": "settings.logs",
+    "defaultLabel": "Logs",
+    "route": "/settings/logs",
+    "permittedRoles": [
+      "manager",
+      "admin",
+      "owner"
+    ],
+    "parentId": "settings",
+    "isSystemProtected": false,
+    "navigationLocation": "settings-tab",
+    "desktop": true,
+    "mobile": true,
+    "icon": "settings.logs"
+  },
+  {
+    "id": "settings.media-library",
+    "defaultLabel": "Media Library",
+    "route": "/settings/media-library",
+    "permittedRoles": [
+      "user",
+      "admin",
+      "manager",
+      "owner"
+    ],
+    "parentId": "settings",
+    "isSystemProtected": false,
+    "navigationLocation": "settings-tab",
+    "desktop": true,
+    "mobile": true,
+    "icon": "settings.media-library"
+  },
+  {
+    "id": "settings.sidebar-management",
+    "defaultLabel": "Sidebar Management",
+    "route": "/settings/sidebar-management",
+    "permittedRoles": [
+      "owner",
+      "admin"
+    ],
+    "parentId": "settings",
+    "isSystemProtected": true,
+    "navigationLocation": "settings-tab",
+    "desktop": true,
+    "mobile": true,
+    "icon": "settings.sidebar-management"
+  }
+]

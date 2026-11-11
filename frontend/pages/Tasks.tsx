@@ -1,16 +1,15 @@
+import { useTaskFilter, useTaskViewActive } from '../hooks/useTaskView';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Task, User, TaskStatus, TaskPriority, CUSTOM_STATUS_NAMES, Role, TaskKanbanResponse } from '../types';
+import { Task, User, TaskStatus, TaskPriority, CUSTOM_STATUS_NAMES, Role } from '../types';
 import { useAuth, useSearch, useTheme } from '../hooks/useAuth';
 import { useTaskList } from '../hooks/useTaskList';
 import { useTaskPrefetch } from '../hooks/useTaskPrefetch';
-import { useTaskWebSocket } from '../hooks/useTaskWebSocket';
-import { buildTaskKanbanKey, getTaskCaches, invalidateTaskCaches } from '../hooks/useTaskCache';
 import api from '../services/mockApi';
 import { loadPointsConfig, POINTS_CONFIG_UPDATED_EVENT } from '../utils/pointsConfigStorage';
 import { formatDate, timeAgo } from '../utils';
 import { augmentTasksWithPoints, summarizeTaskPoints, formatPointsValue, TaskPointsTone } from '../utils/taskPoints';
-import { priorityPillStyle, stageCardStyle, stageColumnStyle } from '../utils/themeTokens';
+import { stageCardStyle } from '../utils/themeTokens';
 import { PlusIcon, TagIcon } from '../components/icons';
 import TaskStatusBadge from '../components/ui/TaskStatusBadge';
 import TaskPriorityBadge from '../components/ui/TaskPriorityBadge';
@@ -90,13 +89,6 @@ const toIsoDate = (value: Date): string => {
     const day = String(value.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
 };
-
-const formatPriority = (value: TaskPriority) =>
-    value
-        .toLowerCase()
-        .split('_')
-        .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-        .join(' ');
 
 const completedStatuses = new Set<TaskStatus>([
     TaskStatus.DONE,
@@ -244,6 +236,8 @@ const FilterDropdown: React.FC<{
     emptyStateText = 'No results found.',
 }) => {
     const [isOpen, setIsOpen] = useState(false);
+    const active = useTaskViewActive();
+    useEffect(() => { if (!active) setIsOpen(false); }, [active]);
     const [searchQuery, setSearchQuery] = useState('');
     const wrapperRef = useRef<HTMLDivElement | null>(null);
     const buttonRef = useRef<HTMLButtonElement | null>(null);
@@ -376,15 +370,13 @@ const FilterDropdown: React.FC<{
 
 
 const Tasks: React.FC = () => {
+  const active = useTaskViewActive();
     const [tasks, setTasks] = useState<Task[]>([]);
     const [usersMap, setUsersMap] = useState<Map<string, User>>(new Map());
     const [departmentOptions, setDepartmentOptions] = useState<string[]>([]);
     const [totalPages, setTotalPages] = useState(1);
     const [totalTasks, setTotalTasks] = useState(0);
-    const [statusCounts, setStatusCounts] = useState<Record<TaskStatus, number>>({});
-    const [kanbanData, setKanbanData] = useState<TaskKanbanResponse | null>(null);
-    const [kanbanLoading, setKanbanLoading] = useState(false);
-    const [kanbanRefreshTick, setKanbanRefreshTick] = useState(0);
+    const [statusCounts, setStatusCounts] = useState<Partial<Record<TaskStatus, number>>>({});
     const { user } = useAuth();
     const { searchQuery, setSearchQuery, debouncedSearchQuery } = useSearch();
     const { theme } = useTheme();
@@ -392,7 +384,6 @@ const Tasks: React.FC = () => {
     const isDark = resolvedTheme === 'dark';
     const isColorful = resolvedTheme === 'colorful';
     const isLight = resolvedTheme === 'light';
-    const kanbanTextColor = isLight ? '#0F172A' : '#FFFFFF';
 
     const taskTextColor = isDark ? 'text-white' : 'text-slate-900';
     const taskTextSecondary = isDark ? 'text-white/80' : 'text-slate-700';
@@ -462,56 +453,55 @@ const Tasks: React.FC = () => {
     const [isCreateModalOpen, setCreateModalOpen] = useState(false);
     const [isTemplateModalOpen, setTemplateModalOpen] = useState(false);
     const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+    const [linkedTaskId, setLinkedTaskId] = useTaskFilter<string>('taskId', '');
+    useEffect(() => {
+        if (active && /^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i.test(linkedTaskId)) setSelectedTaskId(linkedTaskId);
+    }, [active, linkedTaskId]);
     const prefetchedTaskIdsRef = useRef<Set<string>>(new Set());
 
     // New state for selected tasks for bulk actions
     const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
 
     // Filtering and sorting state
-    const [statusFilter, setStatusFilter] = useState<string>('');
-    const [priorityFilter, setPriorityFilter] = useState<string>('');
-    const [assigneeFilter, setAssigneeFilter] = useState<string>('');
-    const [teamFilter, setTeamFilter] = useState<string>('');
-    const [dueDateFilter, setDueDateFilter] = useState<string>('');
-    const [creationDateFilter, setCreationDateFilter] = useState<string>('');
+    const [statusFilter, setStatusFilter] = useTaskFilter<string>('status', '');
+    const [priorityFilter, setPriorityFilter] = useTaskFilter<string>('priority', '');
+    const [assigneeFilter, setAssigneeFilter] = useTaskFilter<string>('assignee', '');
+    const [teamFilter, setTeamFilter] = useTaskFilter<string>('team', '');
+    const [dueDateFilter, setDueDateFilter] = useTaskFilter<string>('due', '');
+    const [creationDateFilter, setCreationDateFilter] = useTaskFilter<string>('created', '');
     const [isDateRangeOpen, setDateRangeOpen] = useState(false);
+    useEffect(() => { if (!active) setDateRangeOpen(false); }, [active]);
     const [activeDatePreset, setActiveDatePreset] = useState<'7d' | '30d' | 'mtd' | 'ytd' | 'custom' | ''>('');
     const dateRangeRef = useRef<HTMLDivElement | null>(null);
     const dateRangeButtonRef = useRef<HTMLButtonElement | null>(null);
     const dateRangePanelRef = useRef<HTMLDivElement | null>(null);
     const [dateRangePanelStyle, setDateRangePanelStyle] = useState<React.CSSProperties | undefined>(undefined);
-    const kanbanScrollRef = useRef<HTMLDivElement | null>(null);
-    const kanbanTrackRef = useRef<HTMLDivElement | null>(null);
-    const [canScrollKanbanLeft, setCanScrollKanbanLeft] = useState(false);
-    const [canScrollKanbanRight, setCanScrollKanbanRight] = useState(false);
-    const [quickFilter, setQuickFilter] = useState<string>('');
-    const [viewMode, setViewMode] = useState<'list' | 'grid' | 'kanban'>(() => {
+    const [quickFilter, setQuickFilter] = useTaskFilter<string>('quick', '');
+    const [viewMode, setViewMode] = useState<'list' | 'grid'>(() => {
         if (typeof window !== 'undefined') {
             const saved = localStorage.getItem('taskViewMode');
-            if (saved === 'list' || saved === 'grid' || saved === 'kanban') {
+            if (saved === 'list' || saved === 'grid') {
                 return saved;
             }
         }
         return 'list';
     });
     const [currentPage, setCurrentPage] = useState(1);
-    const prefetchSummaries = false;
-    const [globalPageSize, setGlobalPageSize] = useState(50);
-    const [pageSizeByView, setPageSizeByView] = useState<Record<'list' | 'grid' | 'kanban', number>>({
+    const [pageSizeByView, setPageSizeByView] = useState<Record<'list' | 'grid', number>>({
         list: 50,
         grid: 30,
-        kanban: 10,
     });
 
-    const changeViewMode = (mode: 'list' | 'grid' | 'kanban') => {
+    const changeViewMode = (mode: 'list' | 'grid') => {
         setViewMode(mode);
+        setCurrentPage(1);
         if (typeof window !== 'undefined') {
             localStorage.setItem('taskViewMode', mode);
         }
     };
 
-    const pageSize = Math.min(globalPageSize, pageSizeByView[viewMode]);
-    const apiPageSize = viewMode === 'grid' ? pageSize * 3 : pageSize;
+    const pageSize = pageSizeByView[viewMode];
+    const apiPageSize = pageSize;
     const dateRangeLabel = useMemo(() => formatRangeLabel(dueDateFilter), [dueDateFilter]);
     const dateRangeTokens = useMemo(() => parseRangeToken(dueDateFilter), [dueDateFilter]);
 
@@ -584,10 +574,9 @@ const Tasks: React.FC = () => {
 
     const { data: pageResult, loading: listLoading, refresh: refreshTasks } = useTaskList({
         params: listParams,
-        enabled: Boolean(user),
+        enabled: Boolean(user) && active,
     });
 
-    const { kanbanCache, ttlMs } = useMemo(() => getTaskCaches(), []);
     const loading = listLoading;
     const [isContentFading, setIsContentFading] = useState(false);
 
@@ -693,99 +682,19 @@ const Tasks: React.FC = () => {
         };
     }, [isDateRangeOpen, updateDateRangePanelPosition]);
 
-    const kanbanParams = useMemo(
-        () => ({
-            pageSize: pageSizeByView.kanban,
-            search: debouncedSearchQuery || undefined,
-            priority: priorityFilter ? (priorityFilter as TaskPriority) : undefined,
-            assigneeId: assigneeFilter || undefined,
-            team: teamFilter || undefined,
-            dueDate: dueDateFilter || undefined,
-            createdDate: creationDateFilter || undefined,
-            quickFilter: quickFilter || undefined,
-        }),
-        [
-            pageSizeByView.kanban,
-            debouncedSearchQuery,
-            priorityFilter,
-            assigneeFilter,
-            teamFilter,
-            dueDateFilter,
-            creationDateFilter,
-            quickFilter,
-        ],
-    );
-
-    const kanbanCacheKey = useMemo(() => buildTaskKanbanKey(kanbanParams), [kanbanParams]);
-
-    useEffect(() => {
-        if (!user) {
-            return;
-        }
-        const cached = kanbanCache.get(kanbanCacheKey);
-        if (cached) {
-            setKanbanData(cached);
-            setKanbanLoading(false);
-        }
-        const shouldFetch = !cached || kanbanRefreshTick > 0;
-        if (!shouldFetch) {
-            return;
-        }
-        setKanbanLoading(!cached);
-        api
-            .getTasksKanban({
-                pageSize: kanbanParams.pageSize,
-                search: kanbanParams.search,
-                priority: kanbanParams.priority,
-                assigneeId: kanbanParams.assigneeId,
-                team: kanbanParams.team,
-                tag: kanbanParams.tag,
-                dueDate: kanbanParams.dueDate,
-                createdDate: kanbanParams.createdDate,
-                quickFilter: kanbanParams.quickFilter,
-            })
-            .then((response) => {
-                if (!response) {
-                    return;
-                }
-                kanbanCache.set(kanbanCacheKey, response, ttlMs);
-                setKanbanData(response);
-            })
-            .catch((error: unknown) => {
-                const message = error instanceof Error ? error.message : 'Unknown error';
-                console.error('Failed to fetch kanban tasks:', message);
-            })
-            .finally(() => {
-                setKanbanLoading(false);
-            });
-    }, [user, kanbanCache, kanbanCacheKey, kanbanParams, kanbanRefreshTick, ttlMs]);
-
     const prefetchBaseParams = useMemo(() => {
         const { page, ...rest } = listParams;
         return rest;
     }, [listParams]);
 
-    const prefetchPages = useMemo(() => [currentPage + 1], [currentPage]);
+    const prefetchPages = useMemo(() => pageResult && currentPage < pageResult.totalPages ? [currentPage + 1] : [], [currentPage, pageResult?.totalPages]);
 
     useTaskPrefetch({
         baseParams: prefetchBaseParams,
         pages: prefetchPages,
-        enabled: Boolean(user),
-        prefetchSummaries,
-        visibleTasks: tasks,
-        kanbanParams,
+        enabled: Boolean(user) && active,
     });
 
-    const handleTaskEvent = useCallback(() => {
-        invalidateTaskCaches();
-        setKanbanRefreshTick((prev) => prev + 1);
-        refreshTasks();
-    }, [refreshTasks]);
-
-    useTaskWebSocket({
-        enabled: Boolean(user),
-        onEvent: handleTaskEvent,
-    });
     useEffect(() => {
         if (typeof window === 'undefined') {
             return;
@@ -838,38 +747,14 @@ const Tasks: React.FC = () => {
 
     const filteredTasks = useMemo(() => tasks, [tasks]);
     const pagedTasks = useMemo(() => filteredTasks, [filteredTasks]);
-    const kanbanTaskIds = useMemo(() => {
-        if (!kanbanData) {
-            return [];
-        }
-        const ids = kanbanData.columns.flatMap((column) => column.items.map((task) => task.id));
-        return Array.from(new Set(ids));
-    }, [kanbanData]);
-
     useEffect(() => {
         if (currentPage > totalPages) {
             setCurrentPage(totalPages);
         }
     }, [currentPage, totalPages]);
 
-    const visibleTaskIds = useMemo(() => {
-        if (viewMode !== 'kanban') {
-            return pagedTasks.map((task) => task.id);
-        }
-        return kanbanTaskIds;
-    }, [viewMode, pagedTasks, kanbanTaskIds]);
-    const selectedTaskPreview = useMemo(() => {
-        if (!selectedTaskId) {
-            return null;
-        }
-        const listTask = tasks.find((task) => task.id === selectedTaskId);
-        if (listTask) {
-            return listTask;
-        }
-        return kanbanData?.columns
-            .flatMap((column) => column.items)
-            .find((task) => task.id === selectedTaskId) ?? null;
-    }, [kanbanData, selectedTaskId, tasks]);
+    const visibleTaskIds = useMemo(() => pagedTasks.map(task => task.id), [pagedTasks]);
+    const selectedTaskPreview = useMemo(() => tasks.find(task => task.id === selectedTaskId) ?? null, [selectedTaskId, tasks]);
     const prefetchTaskDetail = useCallback((taskId: string) => {
         if (prefetchedTaskIdsRef.current.has(taskId)) {
             return;
@@ -950,112 +835,6 @@ const Tasks: React.FC = () => {
             selectAllTasks();
         }
     };
-
-    const scrollKanbanColumns = useCallback((direction: 'left' | 'right') => {
-        const container = kanbanScrollRef.current;
-        if (!container) {
-            return;
-        }
-
-        const maxScrollLeft = Math.max(0, container.scrollWidth - container.clientWidth);
-        if (maxScrollLeft <= 0) {
-            return;
-        }
-
-        const current = Math.max(0, Math.min(maxScrollLeft, container.scrollLeft));
-        const epsilon = 2;
-        let target = current;
-
-        const columns = Array.from(kanbanTrackRef.current?.children ?? []).filter(
-            (element): element is HTMLDivElement => element instanceof HTMLDivElement,
-        );
-
-        if (columns.length > 0) {
-            if (direction === 'right') {
-                const nextColumn = columns.find((column) => column.offsetLeft > current + epsilon);
-                target = nextColumn ? nextColumn.offsetLeft : maxScrollLeft;
-            } else {
-                let previousColumnOffset = 0;
-                for (let index = columns.length - 1; index >= 0; index -= 1) {
-                    if (columns[index].offsetLeft < current - epsilon) {
-                        previousColumnOffset = columns[index].offsetLeft;
-                        break;
-                    }
-                }
-                target = previousColumnOffset;
-            }
-        } else {
-            const step = Math.max(240, Math.round(container.clientWidth * 0.8));
-            target = direction === 'left' ? current - step : current + step;
-        }
-
-        const clampedTarget = Math.max(0, Math.min(maxScrollLeft, target));
-        container.scrollTo({ left: clampedTarget, behavior: 'smooth' });
-    }, []);
-
-    const updateKanbanArrowState = useCallback(() => {
-        const container = kanbanScrollRef.current;
-        if (!container || viewMode !== 'kanban') {
-            setCanScrollKanbanLeft(false);
-            setCanScrollKanbanRight(false);
-            return;
-        }
-        const maxScrollLeft = Math.max(0, container.scrollWidth - container.clientWidth);
-        const current = Math.max(0, Math.min(maxScrollLeft, container.scrollLeft));
-        const epsilon = 2;
-        setCanScrollKanbanLeft(current > epsilon);
-        setCanScrollKanbanRight(current < maxScrollLeft - epsilon);
-    }, [viewMode]);
-
-    useEffect(() => {
-        if (viewMode !== 'kanban') {
-            setCanScrollKanbanLeft(false);
-            setCanScrollKanbanRight(false);
-            return;
-        }
-        const container = kanbanScrollRef.current;
-        if (!container) {
-            return;
-        }
-
-        updateKanbanArrowState();
-        const onScroll = () => updateKanbanArrowState();
-        const onResize = () => updateKanbanArrowState();
-        const resizeObserver = typeof ResizeObserver !== 'undefined'
-            ? new ResizeObserver(() => updateKanbanArrowState())
-            : null;
-
-        container.addEventListener('scroll', onScroll, { passive: true });
-        window.addEventListener('resize', onResize);
-        if (resizeObserver) {
-            resizeObserver.observe(container);
-            if (kanbanTrackRef.current) {
-                resizeObserver.observe(kanbanTrackRef.current);
-            }
-        }
-
-        return () => {
-            container.removeEventListener('scroll', onScroll);
-            window.removeEventListener('resize', onResize);
-            resizeObserver?.disconnect();
-        };
-    }, [viewMode, kanbanData, kanbanLoading, updateKanbanArrowState]);
-
-    useEffect(() => {
-        if (viewMode !== 'kanban') {
-            return;
-        }
-        const rafId = window.requestAnimationFrame(() => {
-            updateKanbanArrowState();
-        });
-        const timerId = window.setTimeout(() => {
-            updateKanbanArrowState();
-        }, 120);
-        return () => {
-            window.cancelAnimationFrame(rafId);
-            window.clearTimeout(timerId);
-        };
-    }, [viewMode, kanbanData, kanbanLoading, updateKanbanArrowState]);
 
     const completedCount = useMemo(() => {
         if (Object.keys(statusCounts).length === 0) {
@@ -1251,7 +1030,6 @@ const Tasks: React.FC = () => {
     const completedTone = getActionButtonTone(quickFilter === 'completed', 'emerald');
     const listTone = getActionButtonTone(viewMode === 'list', 'cyan');
     const gridTone = getActionButtonTone(viewMode === 'grid', 'indigo');
-    const kanbanTone = getActionButtonTone(viewMode === 'kanban', 'violet');
     const selectAllTone = getActionButtonTone(allSelected, 'slate');
     const pagePanelClass = isLight
         ? 'border-indigo-200/70 bg-gradient-to-br from-white via-[#F7FAFF] to-[#EEF6FF] shadow-[0_24px_55px_rgba(79,124,255,0.14)]'
@@ -1399,32 +1177,17 @@ const Tasks: React.FC = () => {
     const gridTaskCardClass = isLight || isColorful
         ? taskCardClass
         : 'relative rounded-2xl border border-border-color p-4 transition-all duration-300 hover:scale-[1.02] cursor-pointer';
-    const kanbanColumnClass = isLight
-        ? 'min-w-[250px] max-w-[280px] shrink-0 snap-start rounded-2xl border border-indigo-200/70 bg-white/78 p-4 shadow-[0_16px_36px_rgba(79,124,255,0.12)] backdrop-blur-xl'
-        : isColorful
-            ? 'min-w-[250px] max-w-[280px] shrink-0 snap-start rounded-2xl border border-fuchsia-200/70 bg-white/78 p-4 shadow-[0_16px_36px_rgba(217,70,239,0.12)] backdrop-blur-xl'
-        : 'min-w-[250px] max-w-[280px] shrink-0 snap-start rounded-2xl border p-4 backdrop-blur-sm';
-    const kanbanDropZoneClass = isLight
-        ? 'mb-3 rounded-2xl border border-dashed border-indigo-200/90 bg-white/60 px-4 py-3 text-center text-sm text-slate-500'
-        : isColorful
-            ? 'mb-3 rounded-2xl border border-dashed border-fuchsia-200/90 bg-white/60 px-4 py-3 text-center text-sm text-slate-500'
-        : 'mb-3 rounded-2xl border border-dashed border-white/25 bg-white/5 px-4 py-3 text-center text-sm text-white/70';
-    const kanbanTaskCardClass = isLight
-        ? 'group relative overflow-hidden rounded-2xl border p-4 text-slate-900 shadow-[0_14px_34px_rgba(79,124,255,0.12)] transition hover:-translate-y-1 hover:shadow-[0_18px_42px_rgba(79,124,255,0.18)]'
-        : isColorful
-            ? 'group relative overflow-hidden rounded-2xl border p-4 text-slate-900 shadow-[0_14px_34px_rgba(217,70,239,0.12)] transition hover:-translate-y-1 hover:shadow-[0_18px_42px_rgba(217,70,239,0.16)]'
-        : 'rounded-2xl border border-white/15 bg-white/10 p-4 text-white shadow-[0_18px_40px_rgba(15,23,42,0.45)] transition hover:-translate-y-2 hover:shadow-xl';
-    const paginationTextClass = isLight || isColorful ? 'text-slate-700' : viewMode === 'kanban' ? 'text-white' : 'text-text-secondary';
+    const paginationTextClass = isLight || isColorful ? 'text-slate-700' : 'text-text-secondary';
     const paginationControlClass = isLight
         ? 'rounded-full border border-indigo-200/80 bg-white/85 px-3 py-2 text-sm font-medium text-slate-800 shadow-[0_8px_18px_rgba(79,124,255,0.12)]'
         : isColorful
             ? 'rounded-full border border-fuchsia-200/80 bg-white/85 px-3 py-2 text-sm font-medium text-slate-800 shadow-[0_8px_18px_rgba(217,70,239,0.10)]'
-        : `rounded-full border border-border-color bg-transparent px-3 py-2 text-sm font-medium shadow-[0_0_12px_rgba(56,189,248,0.2)] ${viewMode === 'kanban' ? 'text-white' : 'text-text-primary'}`;
+        : `rounded-full border border-border-color bg-transparent px-3 py-2 text-sm font-medium shadow-[0_0_12px_rgba(56,189,248,0.2)] text-text-primary`;
     const paginationButtonClass = isLight
         ? 'rounded-full border border-indigo-200/80 bg-white/85 px-4 py-2 text-sm font-semibold uppercase tracking-[0.18em] text-slate-800 shadow-[0_8px_18px_rgba(79,124,255,0.12)] transition hover:border-indigo-300 hover:bg-indigo-50 disabled:opacity-50'
         : isColorful
             ? 'rounded-full border border-fuchsia-200/80 bg-white/85 px-4 py-2 text-sm font-semibold uppercase tracking-[0.18em] text-slate-800 shadow-[0_8px_18px_rgba(217,70,239,0.10)] transition hover:border-fuchsia-300 hover:bg-fuchsia-50 disabled:opacity-50'
-        : `rounded-full border border-border-color px-4 py-2 text-sm font-semibold uppercase tracking-[0.18em] shadow-[0_0_14px_rgba(56,189,248,0.2)] transition hover:border-primary hover:bg-primary/10 disabled:opacity-50 ${viewMode === 'kanban' ? 'text-white' : 'text-text-primary'}`;
+        : `rounded-full border border-border-color px-4 py-2 text-sm font-semibold uppercase tracking-[0.18em] shadow-[0_0_14px_rgba(56,189,248,0.2)] transition hover:border-primary hover:bg-primary/10 disabled:opacity-50 text-text-primary`;
     const missionLabelClass = isColorful
         ? 'rounded-full bg-gradient-to-r from-rose-500 via-fuchsia-500 to-violet-500 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.4em] text-white shadow-[0_10px_22px_rgba(217,70,239,0.22)]'
         : 'rounded-full bg-rose-600 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.4em] text-white shadow-[0_0_18px_rgba(244,63,94,0.65)]';
@@ -1484,21 +1247,20 @@ const Tasks: React.FC = () => {
 
     const handleCloseDetailModal = () => {
         setSelectedTaskId(null);
-        refreshTasks();
+        if (linkedTaskId) setLinkedTaskId('');
     };
 
     const handleTaskCreated = () => {
         setCreateModalOpen(false);
-        refreshTasks();
     };
 
     return (
         <div className={isLight ? 'tasks-light-theme space-y-6' : isColorful ? 'tasks-colorful-theme relative isolate min-h-screen space-y-6 overflow-hidden' : 'space-y-6'}>
             <div className="p-1 sm:p-1">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                    <h1 className={isLight || isColorful ? 'text-3xl font-bold text-slate-950' : 'text-3xl font-bold text-text-primary'}>
-                        Tasks <span className={isLight || isColorful ? 'inline-block align-top text-xl text-fuchsia-500 sparkle-pulse' : 'inline-block align-top text-xl text-cyan-300 sparkle-pulse'}>*</span>
-                    </h1>
+                    <h2 className={isLight || isColorful ? 'text-3xl font-bold text-slate-950' : 'text-3xl font-bold text-text-primary'}>
+                        Task list <span className={isLight || isColorful ? 'inline-block align-top text-xl text-fuchsia-500 sparkle-pulse' : 'inline-block align-top text-xl text-cyan-300 sparkle-pulse'}>*</span>
+                    </h2>
                     <div className="flex flex-wrap items-center gap-2">
                         {(user?.role === Role.MANAGER || user?.role === Role.ADMIN || user?.role === Role.OWNER) && (
                             <button onClick={() => setTemplateModalOpen(true)} className={templateButtonClass}>
@@ -1795,54 +1557,7 @@ const Tasks: React.FC = () => {
                             <span className={`pointer-events-none absolute inset-x-2 bottom-1 h-px ${quickFilterButtonTheme.edgeBottom}`} />
                             <span className="relative z-10 inline-flex items-center gap-2"><span className={gridTone.iconClassName}>{'\u25A6'}</span>Grid</span>
                         </button>
-                        <button
-                            onClick={() => changeViewMode('kanban')}
-                            className={[kanbanTone.className, 'pointer-events-auto'].join(' ')}
-                            title="Kanban View"
-                        >
-                            <span className={`pointer-events-none absolute inset-0 rounded-[10px] ${quickFilterButtonTheme.overlay} opacity-80`} />
-                            <span className={`pointer-events-none absolute inset-x-2 top-1 h-px ${quickFilterButtonTheme.edgeTop}`} />
-                            <span className={`pointer-events-none absolute inset-x-2 bottom-1 h-px ${quickFilterButtonTheme.edgeBottom}`} />
-                            <span className="relative z-10 inline-flex items-center gap-2"><span className={kanbanTone.iconClassName}>{'\u25A5'}</span>Kanban</span>
-                        </button>
-                        {viewMode === 'kanban' && (
-                            <>
-                                <button
-                                    type="button"
-                                    onClick={(event) => {
-                                        event.preventDefault();
-                                        event.stopPropagation();
-                                        if (!canScrollKanbanLeft) return;
-                                        scrollKanbanColumns('left');
-                                    }}
-                                    disabled={!canScrollKanbanLeft}
-                                    aria-label="Scroll kanban left"
-                                    className="group pointer-events-auto relative z-20 inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-cyan-300/45 bg-slate-950/70 text-cyan-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.25),0_10px_18px_rgba(2,6,23,0.55)] transition duration-200 hover:border-cyan-200/80 hover:text-cyan-50 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_0_18px_rgba(34,211,238,0.45)] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:border-cyan-300/45 disabled:hover:text-cyan-100 disabled:hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.25),0_10px_18px_rgba(2,6,23,0.55)]"
-                                    title="Previous kanban section"
-                                >
-                                    <span className="pointer-events-none absolute inset-0 z-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.16),transparent_50%,rgba(14,116,144,0.45))] opacity-90" />
-                                    <span className="pointer-events-none absolute inset-x-2 top-1 z-0 h-px bg-white/35" />
-                                    <span className="pointer-events-none relative z-10 text-lg leading-none">{'\u2039'}</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={(event) => {
-                                        event.preventDefault();
-                                        event.stopPropagation();
-                                        if (!canScrollKanbanRight) return;
-                                        scrollKanbanColumns('right');
-                                    }}
-                                    disabled={!canScrollKanbanRight}
-                                    aria-label="Scroll kanban right"
-                                    className="group pointer-events-auto relative z-20 inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-cyan-300/45 bg-slate-950/70 text-cyan-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.25),0_10px_18px_rgba(2,6,23,0.55)] transition duration-200 hover:border-cyan-200/80 hover:text-cyan-50 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_0_18px_rgba(34,211,238,0.45)] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:border-cyan-300/45 disabled:hover:text-cyan-100 disabled:hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.25),0_10px_18px_rgba(2,6,23,0.55)]"
-                                    title="Next kanban section"
-                                >
-                                    <span className="pointer-events-none absolute inset-0 z-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.16),transparent_50%,rgba(14,116,144,0.45))] opacity-90" />
-                                    <span className="pointer-events-none absolute inset-x-2 top-1 z-0 h-px bg-white/35" />
-                                    <span className="pointer-events-none relative z-10 text-lg leading-none">{'\u203A'}</span>
-                                </button>
-                            </>
-                        )}
+
                     </div>
 
                     <div className="flex items-center gap-2">
@@ -1968,118 +1683,18 @@ const Tasks: React.FC = () => {
                         })}
                     </div>
                 )}
-                {viewMode === 'kanban' && (
-                    <div className="min-w-0 space-y-2">
-                    {(!isLight && !isColorful) && <style>{`.tasks-kanban-theme, .tasks-kanban-theme * { color: inherit !important; }`}</style>}
-                    <div className="tasks-kanban-theme min-w-0" style={{ color: kanbanTextColor }}>
-                    <div
-                        ref={kanbanScrollRef}
-                        className="w-full max-w-full overflow-x-auto overflow-y-hidden pb-1 scroll-smooth touch-pan-x"
-                        style={{ WebkitOverflowScrolling: 'touch' }}
-                    >
-                        <div ref={kanbanTrackRef} className="flex w-max min-w-full snap-x snap-mandatory gap-4">
-                        {kanbanLoading && (
-                            <div className="rounded-lg border border-border-color bg-surface/70 p-4 text-sm text-text-secondary">
-                                Loading kanban...
-                            </div>
-                        )}
-                        {!kanbanLoading && (kanbanData?.columns ?? []).length === 0 && (
-                            <div className="rounded-lg border border-border-color bg-surface/70 p-4 text-sm text-text-secondary">
-                                No tasks available.
-                            </div>
-                        )}
-                        {(kanbanData?.columns ?? []).map((column) => {
-                            const status = column.status as TaskStatus;
-                            const columnLabel = column.title || CUSTOM_STATUS_NAMES[column.status]?.name || column.status;
-                            const isDropZoneHint = column.items.length === 0;
-
-                            return (
-                            <div
-                                key={column.status}
-                                className={kanbanColumnClass}
-                                style={isLight || isColorful ? undefined : stageColumnStyle(status)}
-                            >
-                                <h2
-                                    className={isLight || isColorful ? 'mb-4 font-semibold text-slate-950' : 'mb-4 font-semibold'}
-                                    title={CUSTOM_STATUS_NAMES[column.status]?.tooltip ?? 'Status info unavailable'}
-                                >
-                                    <span
-                                        className={isLight || isColorful ? 'mr-2 inline-block h-2.5 w-2.5 rounded-full align-middle shadow-[0_0_12px_currentColor]' : 'hidden'}
-                                        style={isLight || isColorful ? { color: getTaskAccentColor(status), backgroundColor: getTaskAccentColor(status) } : undefined}
-                                    />
-                                    {columnLabel}
-                                </h2>
-                                {isDropZoneHint && (
-                                    <div className={kanbanDropZoneClass}>
-                                        Drop quests here
-                                    </div>
-                                )}
-                                <div className="flex flex-col gap-3">
-                                    {column.items.map((task) => {
-                                        const showReadMore = task.description.trim().length > 100;
-                                        return (
-                                            <div
-                                                key={task.id}
-                                                className={kanbanTaskCardClass}
-                                                style={isLight || isColorful ? getTaskCardInlineStyle(task.status) : undefined}
-                                                onMouseEnter={() => prefetchTaskDetail(task.id)}
-                                            >
-                                                {(isLight || isColorful) && (
-                                                    <span
-                                                        className="pointer-events-none absolute inset-y-4 left-0 w-1 rounded-r-full"
-                                                        style={{ backgroundColor: getTaskAccentColor(task.status) }}
-                                                    />
-                                                )}
-                                                <div className="flex items-start justify-between gap-2">
-                                                <h3 className={isLight || isColorful ? 'min-h-[3rem] font-semibold text-slate-950 line-clamp-2' : 'min-h-[3rem] font-semibold text-white line-clamp-2'}>
-                                                    {task.title}
-                                                </h3>
-                                                <span className="rounded-full border px-3 py-1 text-xs font-semibold" style={priorityPillStyle(task.priority)}>
-                                                    {formatPriority(task.priority)}
-                                                </span>
-                                                </div>
-                                                <p className={isLight || isColorful ? 'min-h-[2.5rem] text-sm text-slate-600 line-clamp-2 break-words overflow-hidden' : 'min-h-[2.5rem] text-sm text-white/80 line-clamp-2 break-words overflow-hidden'}>
-                                                    {task.description}
-                                                </p>
-                                                {showReadMore && (
-                                                    <span className={isLight || isColorful ? 'mt-1 inline-block text-xs font-semibold text-indigo-600' : 'mt-1 inline-block text-xs font-semibold text-cyan-200/90'}>
-                                                        Read more..
-                                                    </span>
-                                                )}
-                                                <div className={isLight || isColorful ? 'mt-3 grid gap-1 text-xs text-slate-600' : 'mt-3 grid gap-1 text-xs text-white/80'}>
-                                                    <div>Created by: {task.createdByName || usersMap.get(task.createdBy ?? '')?.name || 'Unknown'}</div>
-                                                    <div>Created at: {formatDate(task.createdAt, true)}</div>
-                                                    <div>Assigned to: {formatAssigneeNames(task.assignedTo)}</div>
-                                                    <div>Due date: {formatDate(task.dueAt)}</div>
-                                                </div>
-                                                <button
-                                                    onMouseEnter={() => prefetchTaskDetail(task.id)}
-                                                    onClick={() => handleTaskClick(task.id)}
-                                                    className={isLight || isColorful ? 'mt-3 w-full rounded-full border border-indigo-300/80 bg-white/70 px-3 py-1 text-sm font-semibold text-indigo-700 shadow-[0_8px_18px_rgba(79,124,255,0.12)] transition hover:bg-indigo-50' : 'mt-3 w-full rounded-full border border-blue-400 bg-blue-500/10 px-3 py-1 text-sm font-semibold text-blue-200 transition hover:bg-blue-500/20'}
-                                                >
-                                                    View
-                                                </button>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        );})}
-                        </div>
-                    </div>
-                    </div>
-                    </div>
-                )}
             </div>
 
             {/* Bottom buttons removed - now at top */}
             <div className={`mt-6 grid gap-3 text-xs md:grid-cols-[1fr_auto_1fr] md:items-center ${paginationTextClass}`}>
                 <div className="flex items-center gap-2 md:justify-start">
-                    <span className="text-xs uppercase tracking-[0.2em]">Rows</span>
+                    <span className="text-xs uppercase tracking-[0.2em]">Tasks per page</span>
                     <select
+                        aria-label="Tasks per page"
                         value={pageSize}
                         onChange={(event) => {
                             const nextValue = Number(event.target.value);
+                            setCurrentPage(1);
                             setPageSizeByView((prev) => ({ ...prev, [viewMode]: nextValue }));
                         }}
                         className={paginationControlClass}
@@ -2117,7 +1732,7 @@ const Tasks: React.FC = () => {
                 <div className="hidden md:block" />
             </div>
 
-            {isCreateModalOpen && (
+            {active && isCreateModalOpen && (
                 <CreateTaskModal
                     isOpen={isCreateModalOpen}
                     onClose={() => setCreateModalOpen(false)}
@@ -2125,7 +1740,7 @@ const Tasks: React.FC = () => {
                 />
             )}
 
-            {selectedTaskId && (
+            {active && selectedTaskId && (
                 <TaskDetailModal
                     taskId={selectedTaskId}
                     isOpen={Boolean(selectedTaskId)}
@@ -2139,7 +1754,7 @@ const Tasks: React.FC = () => {
                 />
             )}
 
-            {isTemplateModalOpen && (
+            {active && isTemplateModalOpen && (
                 <TaskTemplateModal
                     isOpen={isTemplateModalOpen}
                     onClose={() => setTemplateModalOpen(false)}

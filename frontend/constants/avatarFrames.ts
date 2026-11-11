@@ -7,7 +7,15 @@ export const ROLE_FRAME_CLASSES: Record<Role, string> = {
   [Role.USER]: 'border-4 border-slate-300 shadow-inner dark:border-slate-500',
 };
 
+export const PROFILE_FRAME_OPTIONS = [
+  { value: 'classic', label: 'Classic Slate' },
+  { value: 'aurora', label: 'Aurora Neon' },
+  { value: 'solar', label: 'Solar Flare' },
+  { value: 'emerald', label: 'Emerald Crest' },
+] as const;
+
 export const FRAME_OPTIONS = [
+  ...PROFILE_FRAME_OPTIONS.map(frame => ({ id: frame.value, label: frame.label, description: 'Profile frame' })),
   {
     id: 'role-ring',
     label: 'Role ring',
@@ -29,6 +37,14 @@ export const DEFAULT_FRAME_ID = 'role-ring';
 
 export const getFrameClassName = (frameId: string, role: Role): string => {
   switch (frameId) {
+    case 'classic':
+      return 'ring-2 ring-slate-400';
+    case 'aurora':
+      return 'ring-2 ring-purple-400 shadow-[0_0_12px_rgba(168,85,247,0.4)]';
+    case 'solar':
+      return 'ring-2 ring-orange-400 shadow-[0_0_12px_rgba(251,146,60,0.4)]';
+    case 'emerald':
+      return 'ring-2 ring-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.4)]';
     case 'role-ring':
       return ROLE_FRAME_CLASSES[role] ?? 'border-4 border-indigo-400';
     case 'achievement-glow':

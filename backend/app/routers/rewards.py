@@ -143,7 +143,7 @@ def list_claims(
     current_user: models.User = Depends(get_current_admin),
 ):
     _ensure_owner_or_admin(current_user)
-    return reward_service.list_claims(db, status_filter=status_filter, page=page, page_size=page_size)
+    return reward_service.list_claims(db, actor=current_user, status_filter=status_filter, page=page, page_size=page_size)
 
 
 @claims_router.post("/{claim_id}/approve", response_model=schemas.RewardClaimRead)

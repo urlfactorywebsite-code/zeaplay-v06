@@ -1,3 +1,4 @@
+import Avatar from '../../../components/Avatar';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { XMarkIcon } from '../../../components/icons';
 import { User } from '../../../types';
@@ -199,7 +200,7 @@ const ChatModal: React.FC<Props> = ({
                     className={`flex items-center gap-3 rounded-2xl border px-3 py-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-500 ${checked ? 'border-violet-300 bg-violet-50' : 'border-slate-200 bg-white hover:border-sky-200 hover:bg-sky-50'}`}
                   >
                     <span className="relative grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-violet-500 to-sky-500 text-sm font-bold text-white">
-                      {candidate.name.slice(0, 2).toUpperCase()}
+                      <Avatar user={candidate} className="h-full w-full" />
                       <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white ${presenceClass[status]}`} />
                     </span>
                     <span className="min-w-0 flex-1">

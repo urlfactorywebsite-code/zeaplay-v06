@@ -1,0 +1,95 @@
+{
+  "date": "2026-10-29",
+  "scope": "Local source, disposable SQLite, Chromium browser fixtures. No deployment.",
+  "checks": {
+    "backendFocused": {
+      "status": "PASS",
+      "tests": 174,
+      "warnings": 1062,
+      "seconds": 40.28
+    },
+    "frontendUnit": {
+      "status": "PASS",
+      "tests": 35
+    },
+    "taskBrowser": {
+      "status": "PASS",
+      "passed": 17,
+      "failed": 0,
+      "uncaughtErrors": 0
+    },
+    "settingsBrowser": {
+      "status": "PASS",
+      "passed": 77,
+      "failed": 0,
+      "uncaughtErrors": 0
+    },
+    "productionBuild": {
+      "status": "PASS",
+      "seconds": 20.91,
+      "warnings": "Existing large chunk and Lottie dependency warnings"
+    },
+    "registryAndPolicyTestLint": {
+      "status": "PASS",
+      "rules": "Full configured Ruff rules"
+    },
+    "taskSocketLint": {
+      "status": "PASS",
+      "rules": "E9,F,I"
+    },
+    "repositoryRuff": {
+      "status": "FAIL",
+      "violations": 2423
+    },
+    "typescript": {
+      "status": "FAIL",
+      "diagnostics": 113,
+      "before": 118,
+      "introducedDiagnosticSignatures": [],
+      "removedDiagnosticCount": 5
+    },
+    "fullBackendSuite": {
+      "status": "FAIL",
+      "stage": "collection",
+      "errors": 4,
+      "cause": "SQLite does not implement PostgreSQL to_tsvector",
+      "modules": [
+        "test_generate_token.py",
+        "test_oauth2_server.py",
+        "test_task_list.py",
+        "test_ticket_tenant_permissions.py"
+      ],
+      "isolation": "Temporary cwd; memory DB environment; outbound socket connections blocked"
+    },
+    "frontendEslint": {
+      "status": "NOT RUN",
+      "reason": "No configured ESLint package or script"
+    },
+    "diffWhitespace": {
+      "status": "PASS"
+    },
+    "dedicatedActiveWorkTimer": {
+      "status": "NOT RUN",
+      "reason": "No active-work provider/timer module in this checkout"
+    },
+    "livePostgresAndMultiUserRealtime": {
+      "status": "NOT RUN"
+    },
+    "deployment": {
+      "status": "NOT RUN"
+    }
+  },
+  "testDatabaseHashesUnchanged": {
+    "test_generate_token.db": "7F5D4EBEDC51409592CBB30775758AD7FFDA7245DC5A785DCA492FC0ECBD4920",
+    "test_tasks.db": "F0405555D3C542EF693E887DB75D00B24CD577B4EA1957B1514EF6FCC41A5F51",
+    "test_ticket_api.db": "2863C685ECFFB2E8387AA28D5F7AD42D7D8739D05C87FC3A21C2145B36B84716"
+  },
+  "logsInWindowsTemp": [
+    "zea-tasks-unit-final.log",
+    "zea-tasks-typecheck-final.log",
+    "zea-tasks-build.log",
+    "zea-tasks-ruff.log",
+    "zea-tasks-full-backend.log"
+  ],
+  "overallReleaseGate": "FAIL"
+}

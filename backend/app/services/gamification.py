@@ -1,14 +1,14 @@
 """Gamification helpers for achievements and rewards."""
 
 from statistics import mean
-from typing import Optional
 
-from sqlalchemy import func, select, inspect
+from sqlalchemy import func, inspect, select
 from sqlalchemy.orm import Session
 
 from .. import models
-from .notifications import create_notification
 from .badge_engine import BadgeEvent, process_badge_event
+from .notifications import create_notification
+from .wallet import adjust as adjust_wallet
 from .points_table import (
     get_clarity_points_per_star,
     get_manager_overdue_penalty,
@@ -16,6 +16,15 @@ from .points_table import (
 )
 
 COMPLETED_STATUSES = {models.TaskStatusEnum.DONE, models.TaskStatusEnum.DEPLOYED}
+
+
+def completion_point_components(points, completed_at, due_at):
+    """Canonical existing main-task rule, also used by additional subtasks."""
+    result = {"BASE": points.get("base", 0), "BONUS": 0, "PENALTY": 0}
+    if completed_at and due_at:
+        result["BONUS" if completed_at <= due_at else "PENALTY"] = points.get(
+            "beforeDueBonus" if completed_at <= due_at else "overduePenalty", 0)
+    return result
 
 
 def _department_matches_team(db: Session, user: models.User, team: str) -> bool:
@@ -31,7 +40,7 @@ def _department_matches_team(db: Session, user: models.User, team: str) -> bool:
     return normalized_team != "" and normalized_team == normalized_department
 
 
-def grant_achievement_by_id(db: Session, user: models.User, achievement_id: str) -> Optional[models.Achievement]:
+def grant_achievement_by_id(db: Session, user: models.User, achievement_id: str) -> models.Achievement | None:
     try:
         if "badges" in inspect(db.bind).get_table_names():
             return None
@@ -47,7 +56,7 @@ def grant_achievement_by_id(db: Session, user: models.User, achievement_id: str)
     unlocked_ids = list(user.unlocked_achievement_ids or [])
     unlocked_ids.append(achievement_id)
     user.unlocked_achievement_ids = unlocked_ids
-    user.points += achievement.points
+    adjust_wallet(db, user, achievement.points)
     create_notification(
         db,
         user_id=user.id,
@@ -71,9 +80,7 @@ def check_and_unlock_achievements(db: Session, user: models.User) -> None:
             continue
 
         should_unlock = False
-        if achievement.id == "ach-1" and user.tasks_completed >= 1:
-            should_unlock = True
-        elif achievement.id == "ach-2" and user.tasks_completed >= 5:
+        if achievement.id == "ach-1" and user.tasks_completed >= 1 or achievement.id == "ach-2" and user.tasks_completed >= 5:
             should_unlock = True
         elif achievement.id == "ach-3":
             high_priority_count = db.execute(
@@ -100,23 +107,22 @@ def award_task_completion_points(db: Session, task: models.Task) -> None:
 
     if assignee:
         points = resolve_task_points(db, team=task.team, priority=task.priority)
-        base_points = points.get("base", 0)
-        bonus_points = points.get("beforeDueBonus", 0)
-        penalty_points = points.get("overduePenalty", 0)
-
         completed_at = task.completed_at
         due_at = task.due_at
-        is_late = False
-        if completed_at and due_at:
-            if completed_at <= due_at:
-                total_points = base_points + bonus_points
-            else:
-                total_points = base_points + penalty_points
-                is_late = True
-        else:
-            total_points = base_points
+        components = completion_point_components(points, completed_at, due_at)
+        total_points = sum(components.values())
+        is_late = bool(completed_at and due_at and completed_at > due_at)
 
-        assignee.points += total_points
+        adjust_wallet(db, assignee, total_points)
+        from .workload_notifications import emit
+        import uuid
+        token = db.info.setdefault("phase6_token", str(uuid.uuid4()))
+        for component, delta in components.items():
+            if delta:
+                emit(db, task=task,
+                     kind={"BASE": "points_credited", "BONUS": "bonus_applied", "PENALTY": "penalty_applied"}[component],
+                     source=f"main-payout:{task.id}:{token}:{component}", responsible=assignee.id,
+                     message=f"Main task {component.lower()}: {delta:+d} points for '{task.title}'.")
         assignee.tasks_completed += 1
         check_and_unlock_achievements(db, assignee)
 
@@ -126,7 +132,9 @@ def award_task_completion_points(db: Session, task: models.Task) -> None:
         if creator and assignee and assignee.id != creator.id and is_late and creator.role == models.RoleEnum.MANAGER:
             manager_penalty = get_manager_overdue_penalty(db)
             if manager_penalty and _department_matches_team(db, creator, task.team):
-                creator.points += manager_penalty
+                adjust_wallet(db, creator, manager_penalty)
+                emit(db, task=task, kind="penalty_applied", source=f"main-manager-penalty:{task.id}:{token}",
+                     responsible=creator.id, message=f"Main task manager penalty: {manager_penalty:+d} points for '{task.title}'.")
                 check_and_unlock_achievements(db, creator)
 
     if creator:
@@ -149,7 +157,7 @@ def record_clarity_rating(db: Session, task: models.Task, rating: int) -> None:
     clarity_scores = list(creator.clarity_scores or [])
     clarity_scores.append(safe_rating)
     creator.clarity_scores = clarity_scores
-    creator.points += safe_rating * get_clarity_points_per_star(db)
+    adjust_wallet(db, creator, safe_rating * get_clarity_points_per_star(db))
     check_and_unlock_achievements(db, creator)
     process_badge_event(
         db,

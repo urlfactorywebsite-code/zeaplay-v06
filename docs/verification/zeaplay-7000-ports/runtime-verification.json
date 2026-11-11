@@ -1,0 +1,76 @@
+[
+  {
+    "base": "http://localhost:7211/api",
+    "path": "/auth/me",
+    "status": 200,
+    "cors": "PASS"
+  },
+  {
+    "base": "http://localhost:7211/api",
+    "path": "/tasks/activity",
+    "status": 200,
+    "cors": "PASS"
+  },
+  {
+    "base": "http://localhost:7211/api",
+    "path": "/notifications/inbox",
+    "status": 200,
+    "cors": "PASS"
+  },
+  {
+    "base": "http://localhost:7211/api",
+    "path": "/tasks/page?page=1&page_size=50",
+    "status": 200,
+    "cors": "PASS"
+  },
+  {
+    "base": "http://localhost:7300/api",
+    "path": "/auth/me",
+    "status": 200,
+    "cors": "PASS"
+  },
+  {
+    "base": "http://localhost:7300/api",
+    "path": "/tasks/activity",
+    "status": 200,
+    "cors": "PASS"
+  },
+  {
+    "base": "http://localhost:7300/api",
+    "path": "/notifications/inbox",
+    "status": 200,
+    "cors": "PASS"
+  },
+  {
+    "base": "http://localhost:7300/api",
+    "path": "/tasks/page?page=1&page_size=50",
+    "status": 200,
+    "cors": "PASS"
+  },
+  {
+    "preflight": "/api/tasks/activity",
+    "status": 200,
+    "cors": "PASS"
+  },
+  {
+    "preflight": "/api/push/subscribe",
+    "status": 200,
+    "cors": "PASS"
+  },
+  {
+    "websocket": "ws://localhost:7211/api/ws/tasks",
+    "authenticated_ack": "PASS"
+  },
+  {
+    "websocket": "ws://localhost:7300/ws/tasks",
+    "authenticated_ack": "PASS"
+  },
+  {
+    "presence_connection": true,
+    "redis_backed_presence_ack": true
+  },
+  {
+    "postgres_host_port": 7432,
+    "protocol_handshake": "PASS"
+  }
+]

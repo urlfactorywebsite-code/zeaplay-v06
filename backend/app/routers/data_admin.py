@@ -1,19 +1,25 @@
+# ruff: noqa: B008
 from __future__ import annotations
 
 import secrets
 import uuid
-from datetime import datetime, timedelta
-from typing import Dict, Iterable, List
+from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import delete, inspect, select
 from sqlalchemy.orm import Session, joinedload
 
 from .. import models, schemas
 from ..auth import hash_password, verify_password
-from ..database import SessionLocal, get_db, session_scope
+from ..backups.service import assert_isolated
+from ..database import get_db
 from ..dependencies import get_current_owner
-from ..email_utils import EmailDeliveryError, resolve_smtp_config, send_notification_email
+from ..email_utils import (
+    EmailDeliveryError,
+    resolve_smtp_config,
+    send_notification_email,
+)
 from ..models import task_dependencies
 from ..seed import seed_database
 from ..services import rewards as reward_service
@@ -33,7 +39,7 @@ def _resolve_tenant_id(employer_id: str | None) -> uuid.UUID:
     return uuid.uuid5(uuid.NAMESPACE_URL, "zea-play-tenant:default")
 
 
-def _serialize_users(users: Iterable[models.User]) -> List[schemas.UserBackup]:
+def _serialize_users(users: Iterable[models.User]) -> list[schemas.UserBackup]:
     return [
         schemas.UserBackup(
             id=user.id,
@@ -58,6 +64,7 @@ def _serialize_users(users: Iterable[models.User]) -> List[schemas.UserBackup]:
             phone=user.phone,
             location=user.location,
             timezone=user.timezone,
+            profile_bio=user.profile_bio,
             notes=user.notes,
             skills=list(user.skills or []),
             projects=list(user.projects or []),
@@ -67,7 +74,6 @@ def _serialize_users(users: Iterable[models.User]) -> List[schemas.UserBackup]:
             clarity_scores=list(user.clarity_scores or []),
             claimed_reward_ids=list(user.claimed_reward_ids or []),
             unlocked_achievement_ids=list(user.unlocked_achievement_ids or []),
-            hashed_password=user.hashed_password,
             created_at=user.created_at,
             updated_at=user.updated_at,
         )
@@ -79,9 +85,9 @@ def _build_status_title_map(columns: Iterable[models.KanbanColumn]) -> dict[str,
     return {column.id: column.title for column in columns}
 
 
-def _serialize_tasks(tasks: Iterable[models.Task], status_title_map: dict[str, str] | None = None) -> List[schemas.TaskBackup]:
+def _serialize_tasks(tasks: Iterable[models.Task], status_title_map: dict[str, str] | None = None) -> list[schemas.TaskBackup]:
     status_title_map = status_title_map or {}
-    result: List[schemas.TaskBackup] = []
+    result: list[schemas.TaskBackup] = []
     for task in tasks:
         status_key = getattr(task.status, "value", task.status)
         status_title = status_title_map.get(status_key, status_key)
@@ -128,7 +134,7 @@ def _serialize_tasks(tasks: Iterable[models.Task], status_title_map: dict[str, s
     return result
 
 
-def _serialize_notifications(notifications: Iterable[models.Notification]) -> List[schemas.NotificationBackup]:
+def _serialize_notifications(notifications: Iterable[models.Notification]) -> list[schemas.NotificationBackup]:
     return [
         schemas.NotificationBackup(
             id=notif.id,
@@ -145,7 +151,7 @@ def _serialize_notifications(notifications: Iterable[models.Notification]) -> Li
     ]
 
 
-def _serialize_reward_claims(claims: Iterable[models.RewardClaim]) -> List[schemas.UserRewardBackup]:
+def _serialize_reward_claims(claims: Iterable[models.RewardClaim]) -> list[schemas.UserRewardBackup]:
     return [
         schemas.UserRewardBackup(
             id=claim.id,
@@ -163,7 +169,7 @@ def _serialize_reward_claims(claims: Iterable[models.RewardClaim]) -> List[schem
 
 def _serialize_user_achievements(
     user_achievements: Iterable[models.UserAchievement],
-) -> List[schemas.UserAchievementBackup]:
+) -> list[schemas.UserAchievementBackup]:
     return [
         schemas.UserAchievementBackup(
             user_id=item.user_id,
@@ -176,7 +182,7 @@ def _serialize_user_achievements(
 
 def _serialize_kanban_columns(
     columns: Iterable[models.KanbanColumn],
-) -> List[schemas.KanbanColumnBackup]:
+) -> list[schemas.KanbanColumnBackup]:
     return [
         schemas.KanbanColumnBackup(id=column.id, title=column.title, order=column.order)
         for column in columns
@@ -190,17 +196,17 @@ def export_data(
     current_owner: models.User = Depends(get_current_owner),
     db: Session = Depends(get_db),
 ) -> schemas.DataExportBundle:
-    del current_owner  # owner already validated by dependency
+    assert_isolated(db, current_owner.tenant_id)
 
-    departments: List[schemas.DepartmentRead] = []
-    users: List[schemas.UserBackup] = []
-    tasks: List[schemas.TaskBackup] = []
-    achievements: List[schemas.AchievementRead] = []
-    rewards: List[schemas.RewardRead] = []
-    kanban_columns: List[schemas.KanbanColumnBackup] = []
-    notifications: List[schemas.NotificationBackup] = []
-    user_rewards: List[schemas.UserRewardBackup] = []
-    user_achievements: List[schemas.UserAchievementBackup] = []
+    departments: list[schemas.DepartmentRead] = []
+    users: list[schemas.UserBackup] = []
+    tasks: list[schemas.TaskBackup] = []
+    achievements: list[schemas.AchievementRead] = []
+    rewards: list[schemas.RewardRead] = []
+    kanban_columns: list[schemas.KanbanColumnBackup] = []
+    notifications: list[schemas.NotificationBackup] = []
+    user_rewards: list[schemas.UserRewardBackup] = []
+    user_achievements: list[schemas.UserAchievementBackup] = []
 
     if scope in {schemas.DataExportScope.USERS, schemas.DataExportScope.ALL, schemas.DataExportScope.DEPARTMENTS}:
         departments = [
@@ -219,12 +225,12 @@ def export_data(
                 joinedload(models.Task.dependencies),
             )
         )
-        columns: List[models.KanbanColumn] = []
+        columns: list[models.KanbanColumn] = []
         try:
             inspector = inspect(db.bind)
             if "kanban_columns" in inspector.get_table_names():
                 columns = db.execute(select(models.KanbanColumn)).scalars().all()
-        except Exception:
+        except Exception:  # noqa: BLE001 - legacy optional table
             columns = []
         status_title_map = _build_status_title_map(columns)
         tasks = _serialize_tasks(db.execute(task_query).unique().scalars().all(), status_title_map)
@@ -259,7 +265,7 @@ def export_data(
 
     bundle = schemas.DataExportBundle(
         scope=scope,
-        generated_at=datetime.utcnow(),
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
         departments=departments,
         users=users,
         tasks=tasks,
@@ -277,429 +283,38 @@ def export_data(
 def import_data(
     payload: schemas.DataImportPayload,
     current_owner: models.User = Depends(get_current_owner),
-) -> Dict[str, str]:
-    del current_owner
-    with session_scope() as session:
-        if payload.scope is schemas.DataExportScope.DEPARTMENTS:
-            for department in payload.departments:
-                existing_department = session.get(models.Department, department.id)
-                if not existing_department:
-                    existing_department = session.execute(
-                        select(models.Department).where(models.Department.name == department.name)
-                    ).scalar_one_or_none()
-                if existing_department:
-                    existing_department.name = department.name
-                else:
-                    session.add(models.Department(id=department.id, name=department.name))
-            return {"status": "imported_departments"}
-
-        if payload.scope is schemas.DataExportScope.USERS:
-            valid_department_ids = set(
-                session.execute(select(models.Department.id)).scalars().all()
-            )
-            department_id_map: Dict[str, str] = {}
-            for department in payload.departments:
-                existing_department = session.get(models.Department, department.id)
-                if not existing_department:
-                    existing_department = session.execute(
-                        select(models.Department).where(models.Department.name == department.name)
-                    ).scalar_one_or_none()
-                if existing_department:
-                    existing_department.name = department.name
-                    department_id_map[department.id] = existing_department.id
-                    valid_department_ids.add(existing_department.id)
-                else:
-                    session.add(models.Department(id=department.id, name=department.name))
-                    department_id_map[department.id] = department.id
-                    valid_department_ids.add(department.id)
-
-            for user in payload.users:
-                mapped_department_id = (
-                    department_id_map.get(user.department_id) if user.department_id else None
-                )
-                department_id = (
-                    mapped_department_id
-                    if mapped_department_id in valid_department_ids
-                    else (user.department_id if user.department_id in valid_department_ids else None)
-                )
-                existing_user = session.get(models.User, user.id)
-                if not existing_user:
-                    existing_user = session.execute(
-                        select(models.User).where(models.User.email == user.email)
-                    ).scalar_one_or_none()
-                if existing_user:
-                    existing_user.name = user.name
-                    existing_user.email = user.email
-                    existing_user.employer_id = user.employer_id
-                    existing_user.role = user.role
-                    existing_user.status = user.status
-                    existing_user.department_id = department_id
-                    existing_user.manager_id = user.manager_id
-                    existing_user.manager_email = user.manager_email
-                    existing_user.shift_name = user.shift_name
-                    existing_user.shift_start = user.shift_start
-                    existing_user.shift_end = user.shift_end
-                    existing_user.morning_break_start = user.morning_break_start
-                    existing_user.morning_break_end = user.morning_break_end
-                    existing_user.lunch_break_start = user.lunch_break_start
-                    existing_user.lunch_break_end = user.lunch_break_end
-                    existing_user.evening_break_start = user.evening_break_start
-                    existing_user.evening_break_end = user.evening_break_end
-                    existing_user.title = user.title
-                    existing_user.phone = user.phone
-                    existing_user.location = user.location
-                    existing_user.timezone = user.timezone
-                    existing_user.notes = user.notes
-                    existing_user.skills = list(user.skills or [])
-                    existing_user.projects = list(user.projects or [])
-                    existing_user.points = user.points
-                    existing_user.tasks_created = user.tasks_created
-                    existing_user.tasks_completed = user.tasks_completed
-                    existing_user.clarity_scores = list(user.clarity_scores)
-                    existing_user.claimed_reward_ids = list(user.claimed_reward_ids)
-                    existing_user.unlocked_achievement_ids = list(user.unlocked_achievement_ids)
-                    existing_user.hashed_password = user.hashed_password
-                    existing_user.created_at = user.created_at
-                    existing_user.updated_at = user.updated_at
-                else:
-                    session.add(
-                        models.User(
-                            id=user.id,
-                            tenant_id=_resolve_tenant_id(user.employer_id),
-                            name=user.name,
-                            email=user.email,
-                            employer_id=user.employer_id,
-                            hashed_password=user.hashed_password,
-                            role=user.role,
-                            status=user.status,
-                            department_id=department_id,
-                            manager_id=user.manager_id,
-                            manager_email=user.manager_email,
-                            shift_name=user.shift_name,
-                            shift_start=user.shift_start,
-                            shift_end=user.shift_end,
-                            morning_break_start=user.morning_break_start,
-                            morning_break_end=user.morning_break_end,
-                            lunch_break_start=user.lunch_break_start,
-                            lunch_break_end=user.lunch_break_end,
-                            evening_break_start=user.evening_break_start,
-                            evening_break_end=user.evening_break_end,
-                            title=user.title,
-                            phone=user.phone,
-                            location=user.location,
-                            timezone=user.timezone,
-                            notes=user.notes,
-                            skills=list(user.skills or []),
-                            projects=list(user.projects or []),
-                            points=user.points,
-                            tasks_created=user.tasks_created,
-                            tasks_completed=user.tasks_completed,
-                            clarity_scores=list(user.clarity_scores),
-                            claimed_reward_ids=list(user.claimed_reward_ids),
-                            unlocked_achievement_ids=list(user.unlocked_achievement_ids),
-                            created_at=user.created_at,
-                            updated_at=user.updated_at,
-                        )
-                    )
-
-            return {"status": "imported_users"}
-
-        if payload.scope is schemas.DataExportScope.TASKS:
-            session.execute(delete(models.Comment))
-            session.execute(delete(models.Subtask))
-            session.execute(task_dependencies.delete())
-            session.execute(delete(models.Task))
-            session.execute(delete(models.KanbanColumn))
-
-            for column in payload.kanban_columns:
-                session.add(
-                    models.KanbanColumn(id=column.id, title=column.title, order=column.order)
-                )
-
-            session.flush()
-
-            task_map: Dict[str, models.Task] = {}
-            for task in payload.tasks:
-                task_obj = models.Task(
-                    id=task.id,
-                    title=task.title,
-                    description=task.description,
-                    status=task.status,
-                    priority=task.priority,
-                    team=task.team,
-                    assigned_to_id=task.assigned_to_id,
-                    created_by_id=task.created_by_id,
-                    created_at=task.created_at,
-                    updated_at=task.updated_at,
-                    due_at=task.due_at,
-                    completed_at=task.completed_at,
-                    recurrence_rule=task.recurrence_rule,
-                    recurring_task_id=task.recurring_task_id,
-                    clarity_rating=task.clarity_rating,
-                    attachments=list(task.attachments),
-                    estimated_hours=task.estimated_hours,
-                    tags=list(task.tags),
-                )
-                for subtask in task.subtasks:
-                    task_obj.subtasks.append(
-                        models.Subtask(
-                            id=subtask.id or models.generate_uuid(),
-                            title=subtask.title,
-                            completed=subtask.completed,
-                        )
-                    )
-                for comment in task.comments:
-                    task_obj.comments.append(
-                        models.Comment(
-                            id=comment.id or models.generate_uuid(),
-                            user_id=comment.user_id,
-                            content=comment.content,
-                            created_at=comment.created_at,
-                        )
-                    )
-                session.add(task_obj)
-                task_map[task.id] = task_obj
-
-            session.flush()
-
-            for task in payload.tasks:
-                task_obj = task_map.get(task.id)
-                if not task_obj:
-                    continue
-                task_obj.dependencies = [task_map[dep_id] for dep_id in task.dependencies if dep_id in task_map]
-
-            return {"status": "imported_tasks"}
-
-        if payload.scope is not schemas.DataExportScope.ALL:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Unsupported import scope.",
-            )
-
-        # Clear existing data in order respecting FK constraints
-        session.execute(delete(models.Notification))
-        session.execute(delete(models.RewardClaim))
-        session.execute(delete(models.UserAchievement))
-        session.execute(delete(models.Comment))
-        session.execute(delete(models.Subtask))
-        session.execute(task_dependencies.delete())
-        session.execute(delete(models.Task))
-        session.execute(delete(models.KanbanColumn))
-        session.execute(delete(models.Reward))
-        session.execute(delete(models.Achievement))
-        session.execute(delete(models.User))
-        session.execute(delete(models.Department))
-
-        # Departments
-        for department in payload.departments:
-            session.add(models.Department(id=department.id, name=department.name))
-
-        # Users
-        for user in payload.users:
-            session.add(
-                models.User(
-                    id=user.id,
-                    tenant_id=_resolve_tenant_id(user.employer_id),
-                    name=user.name,
-                    email=user.email,
-                    employer_id=user.employer_id,
-                    hashed_password=user.hashed_password,
-                    role=user.role,
-                    status=user.status,
-                    department_id=user.department_id,
-                    manager_id=user.manager_id,
-                    manager_email=user.manager_email,
-                    shift_name=user.shift_name,
-                    shift_start=user.shift_start,
-                    shift_end=user.shift_end,
-                    morning_break_start=user.morning_break_start,
-                    morning_break_end=user.morning_break_end,
-                    lunch_break_start=user.lunch_break_start,
-                    lunch_break_end=user.lunch_break_end,
-                    evening_break_start=user.evening_break_start,
-                    evening_break_end=user.evening_break_end,
-                    title=user.title,
-                    phone=user.phone,
-                    location=user.location,
-                    timezone=user.timezone,
-                    notes=user.notes,
-                    skills=list(user.skills or []),
-                    projects=list(user.projects or []),
-                    points=user.points,
-                    tasks_created=user.tasks_created,
-                    tasks_completed=user.tasks_completed,
-                    clarity_scores=list(user.clarity_scores),
-                    claimed_reward_ids=list(user.claimed_reward_ids),
-                    unlocked_achievement_ids=list(user.unlocked_achievement_ids),
-                    created_at=user.created_at,
-                    updated_at=user.updated_at,
-                )
-            )
-
-        # Achievements and rewards
-        for achievement in payload.achievements:
-            session.add(
-                models.Achievement(
-                    id=achievement.id,
-                    title=achievement.title,
-                    description=achievement.description,
-                    points=achievement.points,
-                    icon=achievement.icon,
-                )
-            )
-
-        for reward in payload.rewards:
-            session.add(
-                models.Reward(
-                    id=reward.id,
-                    title=reward.title,
-                    description=reward.description,
-                    image_source=reward.image_source,
-                    image_ref=reward.image_ref,
-                    xp_required=reward.xp_required,
-                    dept_whitelist=list(reward.dept_whitelist or []),
-                    auto_redeem=reward.auto_redeem,
-                    allow_multiple_claims=reward.allow_multiple_claims,
-                    expires_at=reward.expires_at,
-                    status=reward.status,
-                    created_by_id=reward.created_by_id,
-                    updated_by_id=reward.updated_by_id,
-                    created_at=reward.created_at,
-                    updated_at=reward.updated_at,
-                )
-            )
-
-        for column in payload.kanban_columns:
-            session.add(
-                models.KanbanColumn(id=column.id, title=column.title, order=column.order)
-            )
-
-        session.flush()
-
-        # Tasks
-        task_map: Dict[str, models.Task] = {}
-        for task in payload.tasks:
-            task_obj = models.Task(
-                id=task.id,
-                title=task.title,
-                description=task.description,
-                status=task.status,
-                priority=task.priority,
-                team=task.team,
-                assigned_to_id=task.assigned_to_id,
-                created_by_id=task.created_by_id,
-                created_at=task.created_at,
-                updated_at=task.updated_at,
-                due_at=task.due_at,
-                completed_at=task.completed_at,
-                recurrence_rule=task.recurrence_rule,
-                recurring_task_id=task.recurring_task_id,
-                clarity_rating=task.clarity_rating,
-                attachments=list(task.attachments),
-                estimated_hours=task.estimated_hours,
-                tags=list(task.tags),
-            )
-            for subtask in task.subtasks:
-                task_obj.subtasks.append(
-                    models.Subtask(
-                        id=subtask.id or models.generate_uuid(),
-                        title=subtask.title,
-                        completed=subtask.completed,
-                    )
-                )
-            for comment in task.comments:
-                task_obj.comments.append(
-                    models.Comment(
-                        id=comment.id or models.generate_uuid(),
-                        user_id=comment.user_id,
-                        content=comment.content,
-                        created_at=comment.created_at,
-                    )
-                )
-            session.add(task_obj)
-            task_map[task.id] = task_obj
-
-        session.flush()
-
-        for task in payload.tasks:
-            task_obj = task_map.get(task.id)
-            if not task_obj:
-                continue
-            task_obj.dependencies = [task_map[dep_id] for dep_id in task.dependencies if dep_id in task_map]
-
-        # Notifications and relations
-        for notification in payload.notifications:
-            session.add(
-                models.Notification(
-                    id=notification.id,
-                    user_id=notification.user_id,
-                    type=notification.type,
-                    message=notification.message,
-                    is_read=notification.is_read,
-                    related_task_id=notification.related_task_id,
-                    related_reward_id=notification.related_reward_id,
-                    related_chat_id=notification.related_chat_id,
-                    created_at=notification.created_at,
-                )
-            )
-
-        for claim in payload.user_rewards:
-            session.add(
-                models.RewardClaim(
-                    id=claim.id,
-                    user_id=claim.user_id,
-                    reward_id=claim.reward_id,
-                    status=claim.status,
-                    xp_spent=claim.xp_spent,
-                    claimed_at=claim.claimed_at,
-                    resolved_at=claim.resolved_at,
-                    approver_id=claim.approver_id,
-                )
-            )
-
-        for unlock in payload.user_achievements:
-            session.add(
-                models.UserAchievement(
-                    user_id=unlock.user_id,
-                    achievement_id=unlock.achievement_id,
-                    unlocked_at=unlock.unlocked_at,
-                )
-            )
-
-    # Re-run seed to ensure reference data like achievements/rewards exist if not provided
-    if payload.scope is schemas.DataExportScope.ALL:
-        seed_database()
-
-    return {"status": "imported"}
+) -> dict[str, str]:
+    raise HTTPException(status_code=409, detail="Legacy backups must be uploaded to /admin/data/manager/imports/validate and explicitly confirmed after preview. No records were changed.")
 
 
 @router.post("/reset/request", status_code=status.HTTP_202_ACCEPTED)
 def request_reset_otp(
     current_owner: models.User = Depends(get_current_owner),
     db: Session = Depends(get_db),
-) -> Dict[str, str]:
+) -> dict[str, str]:
+    assert_isolated(db, current_owner.tenant_id)
     otp = ''.join(secrets.choice('0123456789') for _ in range(6))
     otp_hash = hash_password(otp)
-    expires_at = datetime.utcnow() + timedelta(minutes=OTP_EXPIRATION_MINUTES)
+    expires_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=OTP_EXPIRATION_MINUTES)
 
     token = db.get(models.OwnerResetToken, current_owner.id)
     if token:
         token.otp_hash = otp_hash
         token.expires_at = expires_at
         token.attempts = 0
-        token.created_at = datetime.utcnow()
+        token.created_at = datetime.now(UTC).replace(tzinfo=None)
     else:
         token = models.OwnerResetToken(
             owner_id=current_owner.id,
             otp_hash=otp_hash,
             expires_at=expires_at,
             attempts=0,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(UTC).replace(tzinfo=None),
         )
         db.add(token)
     db.commit()
 
-    smtp_config = resolve_smtp_config(db, "system_alerts")
+    smtp_config = resolve_smtp_config(db, "system_alerts", tenant_id=str(current_owner.tenant_id))
     if not smtp_config:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -731,12 +346,15 @@ def confirm_reset(
     payload: schemas.ResetConfirmPayload,
     current_owner: models.User = Depends(get_current_owner),
     db: Session = Depends(get_db),
-) -> Dict[str, str]:
-    token = db.get(models.OwnerResetToken, current_owner.id)
+) -> dict[str, str]:
+    if payload.confirmation != "RESET WORKSPACE":
+        raise HTTPException(status_code=422, detail="Explicit workspace reset confirmation is required.")
+    assert_isolated(db, current_owner.tenant_id)
+    token = db.execute(select(models.OwnerResetToken).where(models.OwnerResetToken.owner_id == current_owner.id).with_for_update()).scalar_one_or_none()
     if not token:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reset not requested")
 
-    if datetime.utcnow() > token.expires_at:
+    if datetime.now(UTC).replace(tzinfo=None) > token.expires_at:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="OTP expired")
 
     if token.attempts >= OTP_MAX_ATTEMPTS:
@@ -749,9 +367,9 @@ def confirm_reset(
 
     # OTP valid – perform reset
     db.delete(token)
-    db.commit()
 
-    with session_scope() as session:
+    with db.begin_nested():
+        session = db
         session.execute(delete(models.Notification))
         session.execute(delete(models.RewardClaim))
         session.execute(delete(models.UserAchievement))
@@ -766,6 +384,10 @@ def confirm_reset(
         session.execute(delete(models.Department))
         session.execute(delete(models.OwnerResetToken))
 
+        session.add(models.AuditEvent(id=str(uuid.uuid4()), actor_id=None, event_type="FULL_WORKSPACE_RESET",
+            entity_type="workspace", entity_id=str(current_owner.tenant_id),
+            payload={"tenant_id": str(current_owner.tenant_id), "requested_by": current_owner.id}))
+    db.commit()
     seed_database()
 
     return {"status": "reset"}

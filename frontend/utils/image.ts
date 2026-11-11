@@ -13,7 +13,7 @@ function loadImage(src: string): Promise<HTMLImageElement> {
 export async function getCroppedImageDataUrl(
   imageSrc: string,
   crop: Area,
-  mimeType: string = 'image/png',
+  mimeType: string = 'image/webp',
   quality = 0.92,
 ): Promise<string> {
   const image = await loadImage(imageSrc);
@@ -24,8 +24,9 @@ export async function getCroppedImageDataUrl(
     throw new Error('Unable to render crop preview');
   }
 
-  canvas.width = crop.width;
-  canvas.height = crop.height;
+  const scale = Math.min(1, 512 / Math.max(crop.width, crop.height));
+  canvas.width = Math.max(1, Math.round(crop.width * scale));
+  canvas.height = Math.max(1, Math.round(crop.height * scale));
 
   ctx.drawImage(
     image,
@@ -35,8 +36,8 @@ export async function getCroppedImageDataUrl(
     crop.height,
     0,
     0,
-    crop.width,
-    crop.height,
+    canvas.width,
+    canvas.height,
   );
 
   return canvas.toDataURL(mimeType, quality);

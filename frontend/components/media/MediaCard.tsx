@@ -45,7 +45,7 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, isSelected, onSelect, onDel
       }`}
       onClick={() => onSelect(item)}
     >
-      <div className="relative h-40 w-full overflow-hidden bg-slate-800">
+      <button type="button" aria-label={`Preview ${item.filename}`} onClick={(event) => { event.stopPropagation(); onSelect(item); }} className="relative h-40 w-full overflow-hidden bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
         {isImage ? (
           <img src={item.readUrl} alt={item.filename} className="h-full w-full object-cover transition group-hover:scale-105" />
         ) : (
@@ -56,7 +56,7 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, isSelected, onSelect, onDel
         <div className="absolute left-3 top-3 rounded-full bg-slate-900/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white">
           .{extension}
         </div>
-      </div>
+      </button>
       <div className="flex flex-1 flex-col gap-2 p-4">
         <p className="truncate text-sm font-semibold text-white">{item.filename}</p>
         <div className="text-xs text-slate-400">

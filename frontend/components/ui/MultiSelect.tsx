@@ -1,11 +1,12 @@
+import Avatar from '../Avatar';
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { XMarkIcon } from '../icons';
-import { getUserAvatarUrl } from '../../utils/userAvatar';
 
 interface MultiSelectOption {
   id: string;
   name: string;
   avatarUrl?: string | null;
+  avatarFrame?: string | null;
   description?: string;
 }
 
@@ -76,7 +77,6 @@ const MultiSelect: React.FC<MultiSelectProps> = ({
           const status = optionStatusMap[option.id];
           const isActive = status === 'active';
           const isInactive = status === 'inactive';
-          const avatarUrl = getUserAvatarUrl(option);
           return (
             <button
               key={option.id}
@@ -96,11 +96,7 @@ const MultiSelect: React.FC<MultiSelectProps> = ({
                           : 'border-white/20'
                     } bg-black/40 text-xs font-semibold uppercase text-white/60`}
                   >
-                    {avatarUrl ? (
-                      <img src={avatarUrl} alt={option.name} className="h-full w-full object-cover" />
-                    ) : (
-                      option.name.slice(0, 2)
-                    )}
+                    <Avatar user={option} className="h-full w-full" />
                   </span>
                   <span className="flex flex-col">
                     <span className="flex items-center gap-2">

@@ -1,8 +1,8 @@
+import Avatar from './Avatar';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Department, Role, User } from '../types';
 import { useAuth } from '../hooks/useAuth';
 import { ArrowRightIcon, MagnifyingGlassIcon, UsersIcon } from './icons';
-import { getUserAvatarUrl } from '../utils/userAvatar';
 import api from '../services/mockApi';
 
 type OrgGroup = {
@@ -91,11 +91,6 @@ const parseTagInput = (value: string) =>
 
 const tagListToString = (items?: string[]) => (items && items.length > 0 ? items.join(', ') : '');
 
-const initialsFromName = (name: string) => {
-  const parts = name.trim().split(' ').filter(Boolean);
-  const initials = parts.slice(0, 2).map((part) => part[0]?.toUpperCase() ?? '').join('');
-  return initials || '?';
-};
 
 const pickRootUser = (users: User[]): User | null => {
   for (const role of ROLE_PRIORITY) {
@@ -166,7 +161,6 @@ const UserCard: React.FC<{
   const tone = roleTone[user.role];
   const skillsPreview = profile?.skills?.slice(0, 3) ?? [];
   const projectsPreview = profile?.projects?.slice(0, 2) ?? [];
-  const avatarUrl = getUserAvatarUrl(user);
 
   return (
     <div className="relative group" data-org-card>
@@ -177,11 +171,7 @@ const UserCard: React.FC<{
       >
         <div className="flex items-center gap-3">
           <div className="relative flex h-11 w-11 items-center justify-center overflow-hidden rounded-full border border-white/20 bg-slate-700/60 text-sm font-semibold text-white">
-            {avatarUrl ? (
-              <img src={avatarUrl} alt={user.name} className="h-full w-full object-cover" />
-            ) : (
-              <span>{initialsFromName(user.name)}</span>
-            )}
+            <Avatar user={user} className="h-full w-full" />
             <span className={`absolute -bottom-1 right-0 h-3 w-3 rounded-full border border-slate-900 ${tone.dot}`} />
           </div>
           <div className="min-w-0">

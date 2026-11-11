@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChatBubbleOvalLeftEllipsisIcon, XMarkIcon, PaperAirplaneIcon } from './icons';
+import { XMarkIcon, PaperAirplaneIcon } from './icons';
 import { BOT_ERROR_MESSAGE, generateSessionId, sendAiMessage } from '../utils/aiClient';
 
 type BotChatMessage = {
@@ -62,7 +62,7 @@ const Chatbot: React.FC = () => {
                 {/* Header */}
                 <div className="flex-shrink-0 flex justify-between items-center p-3 border-b border-border-color">
                     <h3 className="font-bold text-text-primary">AI Assistant</h3>
-                    <button onClick={() => setIsOpen(false)} className="text-gray-400 hover:text-white">
+                    <button aria-label="Close AI Assistant" onClick={() => setIsOpen(false)} className="text-gray-400 hover:text-white">
                         <XMarkIcon className="h-6 w-6" />
                     </button>
                 </div>
@@ -103,7 +103,7 @@ const Chatbot: React.FC = () => {
                         className="flex-1 bg-background border border-border-color rounded-l-md py-2 px-3 focus:outline-none focus:ring-1 focus:ring-primary text-sm"
                         disabled={isLoading}
                     />
-                    <button onClick={handleSendMessage} disabled={isLoading || !userInput.trim()} className="bg-primary text-white p-2.5 rounded-r-md disabled:opacity-50">
+                    <button aria-label="Send AI message" onClick={handleSendMessage} disabled={isLoading || !userInput.trim()} className="bg-primary text-white p-2.5 rounded-r-md disabled:opacity-50">
                         <PaperAirplaneIcon className="h-5 w-5" />
                     </button>
                 </div>

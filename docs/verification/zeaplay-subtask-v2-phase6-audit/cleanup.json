@@ -1,0 +1,8 @@
+{
+  "owned_fixture_containers_removed": [
+    "/zea-phase6-audit-3198de670876",
+    "/zea-phase6-audit-6388f1764cab"
+  ],
+  "vite_fixture_stopped": true,
+  "installed_services_migrated_or_rebuilt": false
+}

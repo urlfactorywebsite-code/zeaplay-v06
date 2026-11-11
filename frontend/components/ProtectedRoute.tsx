@@ -3,13 +3,15 @@ import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { Role } from '../types';
+import { NavigationAccess } from '../hooks/useNavigation';
 
 interface ProtectedRouteProps {
-  children: JSX.Element;
+  children: React.ReactElement;
   roles: Role[];
+  validateNavigation?: boolean;
 }
 
-const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, roles }) => {
+const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, roles, validateNavigation = true }) => {
   const { user } = useAuth();
   const location = useLocation();
 
@@ -18,11 +20,10 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, roles }) => {
   }
 
   if (!roles.includes(user.role)) {
-    // Redirect to a 'not-authorized' page or dashboard
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to="/settings/profile" replace state={{ navigationDenial: 'Your role does not have access to this page.' }} />;
   }
 
-  return children;
+  return validateNavigation ? <NavigationAccess>{children}</NavigationAccess> : children;
 };
 
 export default ProtectedRoute;

@@ -1,0 +1,8 @@
+{
+  "compared_to": "protected restored pre-repair snapshot",
+  "unchanged": {
+    "wallets": true,
+    "legacy_subtasks": true,
+    "legacy_ledger": true
+  }
+}

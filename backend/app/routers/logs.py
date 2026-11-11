@@ -4,7 +4,7 @@ import csv
 import io
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from .. import models, schemas
@@ -24,7 +24,7 @@ def list_logs(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_admin),
+    current_user: models.User = Depends(get_current_admin),
 ):
     action_enum = None
     if action:
@@ -37,6 +37,7 @@ def list_logs(
             ) from exc
     return reward_service.list_logs(
         db,
+        actor=current_user,
         subject_type=subject_type,
         subject_id=subject_id,
         action=action_enum,
@@ -68,6 +69,16 @@ def _apply_scope_filters(
     current_user: models.User,
     db: Session,
 ):
+    # Navigation and API configuration audit records remain tenant-scoped even
+    # for administrators, including webhook delivery metadata.
+    configuration_record = or_(
+        func.coalesce(models.AuditLog.entity_type, '').in_(("navigation_policy", "api_configuration", "webhook_configuration")),
+        models.AuditLog.action.in_(("NAVIGATION_POLICY_UPDATED", "API_CONFIG_UPDATED", "SMTP_CONFIG_UPDATED")),
+        models.AuditLog.action.like('WEBHOOK_%'),
+    )
+    # Unattributed historical configuration entries are retained in storage, but
+    # cannot safely be returned to a tenant administrator.
+    stmt = stmt.where(or_(~configuration_record, models.AuditLog.entity_id == str(current_user.tenant_id)))
     if current_user.role in {models.RoleEnum.ADMIN, models.RoleEnum.OWNER}:
         return stmt
     if current_user.role == models.RoleEnum.MANAGER:

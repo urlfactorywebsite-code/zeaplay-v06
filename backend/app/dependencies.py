@@ -1,7 +1,7 @@
 """Common FastAPI dependencies."""
 
 import uuid
-from typing import Any, Iterable
+from typing import Any
 
 from fastapi import Depends, HTTPException, status
 from jose import JWTError, jwt
@@ -11,6 +11,7 @@ from .auth import oauth2_scheme
 from .config import get_settings
 from .database import get_db
 from .models import RoleEnum, User, UserStatusEnum
+from .permissions import API_ADMIN_ROLES
 
 settings = get_settings()
 
@@ -44,16 +45,6 @@ def _extract_user_id(payload: dict[str, Any]) -> str:
             headers={"WWW-Authenticate": "Bearer"},
         )
     return str(user_id)
-
-
-def _normalize_roles(raw_roles: Any) -> list[str]:
-    if raw_roles is None:
-        return []
-    if isinstance(raw_roles, str):
-        return [raw_roles]
-    if isinstance(raw_roles, Iterable):
-        return [str(role) for role in raw_roles]
-    return []
 
 
 async def get_current_user(
@@ -98,6 +89,14 @@ async def get_current_owner(current_user: User = Depends(get_current_active_user
     return current_user
 
 
+async def get_current_api_admin(current_user: User = Depends(get_current_active_user)) -> User:
+    # get_current_admin intentionally includes Managers for other application
+    # operations. Credential administration is a narrower capability.
+    if current_user.role not in API_ADMIN_ROLES:
+        raise HTTPException(status_code=403, detail="API administration requires Owner or Admin access")
+    return current_user
+
+
 def get_tenant_id(token: str = Depends(oauth2_scheme)) -> uuid.UUID:
     payload = _decode_access_token(token)
     tenant_id = payload.get("tenant_id")
@@ -120,9 +119,9 @@ def get_tenant_id(token: str = Depends(oauth2_scheme)) -> uuid.UUID:
 def require_roles(*required_roles: str):
     required = {role for role in required_roles if role}
 
-    def _dependency(token: str = Depends(oauth2_scheme)) -> list[str]:
-        payload = _decode_access_token(token)
-        roles = _normalize_roles(payload.get("roles"))
+    def _dependency(current_user: User = Depends(get_current_active_user)) -> list[str]:
+        # JWT role claims can outlive a demotion. The database role is authority.
+        roles = [current_user.role.value]
         if required and not (required & set(roles)):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

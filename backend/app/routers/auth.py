@@ -13,7 +13,7 @@ from ..auth import (
     hash_password,
     verify_password,
 )
-from ..dependencies import get_current_active_user
+from ..dependencies import get_current_active_user, get_current_api_admin
 from ..database import get_db
 from ..config import get_settings
 from ..services import audit_logger
@@ -53,17 +53,30 @@ def register_user(payload: schemas.UserCreate, db: Session = Depends(get_db)) ->
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
 
     tenant_id = _derive_tenant_id(payload.employer_id)
-    user = models.User(
-        tenant_id=tenant_id,
-        name=payload.name,
-        email=payload.email,
-        hashed_password=hash_password(payload.password),
-        role=payload.role,
-        status=payload.status,
-        department_id=payload.department_id,
-        employer_id=payload.employer_id,
-    )
-    db.add(user)
+    # Public registration provisions a new workspace. Joining an existing one
+    # uses the authenticated, role-scoped /users API. Serialize the empty-tenant
+    # check too: row locks cannot protect a tenant that has no user rows yet.
+    from ..services.subtask_rewards import tenant_lock
+
+    with audit_logger._write_savepoint(db):
+        tenant_lock(db, tenant_id)
+        if db.scalar(select(models.User.id).where(models.User.tenant_id == tenant_id).limit(1)):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Use authorized user management to join an existing workspace",
+            )
+        user = models.User(
+            tenant_id=tenant_id,
+            name=payload.name,
+            email=payload.email,
+            hashed_password=hash_password(payload.password),
+            role=payload.role,
+            status=payload.status,
+            department_id=payload.department_id,
+            employer_id=payload.employer_id,
+        )
+        db.add(user)
+        db.flush()
     db.commit()
     db.refresh(user)
 
@@ -215,7 +228,8 @@ def refresh_token(
 
 @router.get("/me", response_model=schemas.UserRead)
 def get_me(current_user=Depends(get_current_active_user)):
-    return current_user
+    from .users import _hydrate_user_avatar
+    return _hydrate_user_avatar(current_user)
 
 
 @router.post("/forgot-password", status_code=status.HTTP_202_ACCEPTED)
@@ -270,7 +284,7 @@ def logout(
 @router.post("/generate-token", response_model=schemas.TokenMintResponse)
 def generate_scoped_token(
     payload: schemas.TokenMintRequest,
-    current_user: models.User = Depends(get_current_active_user),
+    current_user: models.User = Depends(get_current_api_admin),
 ) -> schemas.TokenMintResponse:
     """Issue an access token for the current user with optional custom scopes."""
     normalized_scopes = sorted(set(payload.scopes))

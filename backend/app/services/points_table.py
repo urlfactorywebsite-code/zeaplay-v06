@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Tuple
+from typing import Any
 
 from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
 from .. import models
 
-PointsConfig = Dict[str, Dict[str, Dict[str, int]]]
+PointsConfig = dict[str, dict[str, dict[str, int]]]
 
 DEFAULT_TASK_CREATION_POINTS = 10
 DEFAULT_CLARITY_POINTS_PER_STAR = 5
@@ -102,15 +102,18 @@ def _ensure_points_table(db: Session) -> None:
 
 
 def get_points_table_config(db: Session) -> models.PointsTableConfig:
-    _ensure_points_table(db)
+    # A calculation must never commit, bootstrap DDL, or initialize a singleton
+    # inside its caller's financial transaction. Configuration provisioning is
+    # owned by the existing config routes/migrations, not a reward read.
     points_config = db.get(models.PointsTableConfig, 1)
     if points_config:
         return points_config
-    points_config = models.PointsTableConfig(id=1)
-    db.add(points_config)
-    db.commit()
-    db.refresh(points_config)
-    return points_config
+    return models.PointsTableConfig(
+        id=1, points_config=_clone_default_config(),
+        task_creation_points=DEFAULT_TASK_CREATION_POINTS,
+        clarity_points_per_star=DEFAULT_CLARITY_POINTS_PER_STAR,
+        manager_overdue_penalty=DEFAULT_MANAGER_OVERDUE_PENALTY,
+    )
 
 
 def _normalize_number(value: Any, fallback: int) -> int:
@@ -139,7 +142,7 @@ def _normalize_penalty(value: Any, fallback: int) -> int:
     return normalized
 
 
-def _normalize_priority_points(raw: Any, defaults: Dict[str, int]) -> Dict[str, int]:
+def _normalize_priority_points(raw: Any, defaults: dict[str, int]) -> dict[str, int]:
     if not isinstance(raw, dict):
         return dict(defaults)
     return {
@@ -165,7 +168,7 @@ def _normalize_points_config(raw: Any) -> PointsConfig:
         defaults = config.get(department) or config.get("Other") or {}
         if not isinstance(priorities, dict):
             continue
-        normalized_priority: Dict[str, Dict[str, int]] = {}
+        normalized_priority: dict[str, dict[str, int]] = {}
         for priority in ["LOW", "MEDIUM", "HIGH", "URGENT"]:
             normalized_priority[priority] = _normalize_priority_points(
                 priorities.get(priority),
@@ -179,7 +182,7 @@ def _normalize_department_key(value: str) -> str:
     return "".join(ch for ch in value.lower() if ch.isalnum())
 
 
-def _find_department(config: PointsConfig, team: str) -> Tuple[str, bool]:
+def _find_department(config: PointsConfig, team: str) -> tuple[str, bool]:
     if not team:
         fallback = "Other" if "Other" in config else next(iter(config.keys()), "Other")
         return fallback, True
@@ -199,9 +202,10 @@ def resolve_task_points(
     *,
     team: str,
     priority: models.TaskPriorityEnum,
-) -> Dict[str, int]:
-    points_table = get_points_table_config(db)
-    config = _normalize_points_config(points_table.points_config)
+    config_override: dict | None = None,
+) -> dict[str, int]:
+    points_table = get_points_table_config(db) if config_override is None else None
+    config = _normalize_points_config(points_table.points_config if points_table else config_override)
     department, _ = _find_department(config, team)
     priority_key = priority.value if isinstance(priority, models.TaskPriorityEnum) else str(priority)
     priority_points = config.get(department, {}).get(priority_key)

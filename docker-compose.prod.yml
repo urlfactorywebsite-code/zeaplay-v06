@@ -1,3 +1,5 @@
+# Legacy published artifact pins below are not this source release.
+# Build V6.1.7 with the docker-compose.github.yml source-build override.
 version: "3.8"
 
 x-common-env: &common_env
@@ -8,9 +10,13 @@ x-common-restart: &common_restart
 
 name: zeaplay_v1
 
+<<<<<<< ours
 services:
   # Keep your existing services unchanged
+=======
+>>>>>>> theirs
 services:
+  # Keep your existing services unchanged
   postgres:
     image: postgres:15
     container_name: zea_postgres
@@ -30,11 +36,11 @@ services:
   redis:
     image: redis:7-alpine
     container_name: zea_redis
-    command: redis-server --appendonly yes
+    command: redis-server --port 7379 --appendonly yes
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-p", "7379", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -60,13 +66,13 @@ services:
       VEE_DB_MAX_OVERFLOW: ${VEE_DB_MAX_OVERFLOW}
       VEE_CORS_ALLOW_ORIGINS: '${VEE_CORS_ALLOW_ORIGINS}'
     ports:
-      - "6211:6211"
+      - "7211:7211"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: ["gunicorn", "-c", "gunicorn_conf.py", "app.main:app"]
+    command: ["gunicorn", "-c", "gunicorn_conf.py", "--bind", "0.0.0.0:7211", "app.main:app"]
     <<: *common_restart
 
   frontend:
@@ -79,7 +85,7 @@ services:
       WS_URL: ${WS_URL}
       TICKET_CHAT_WS_URL: ${TICKET_CHAT_WS_URL}
     ports:
-      - "6200:80"
+      - "7300:80"
     depends_on:
       - backend
       - presence
@@ -130,9 +136,9 @@ services:
       PRESENCE_JWT_SECRET: ${PRESENCE_JWT_SECRET}
       PRESENCE_JWT_ALGORITHM: ${PRESENCE_JWT_ALGORITHM}
       PRESENCE_EVENTS_CHANNEL: ${PRESENCE_EVENTS_CHANNEL}
-      CORS_ORIGINS: ${PRESENCE_CORS_ORIGINS}
+      PRESENCE_CORS_ORIGINS: ${PRESENCE_CORS_ORIGINS}
     ports:
-      - "6212:6212"
+      - "7212:7212"
     depends_on:
       redis:
         condition: service_healthy

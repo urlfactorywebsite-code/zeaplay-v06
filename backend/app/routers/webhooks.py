@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import secrets
-from datetime import datetime
 import uuid
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -13,18 +13,13 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..config import get_settings
 from ..database import get_db
-from ..dependencies import get_current_active_user
+from ..dependencies import get_current_api_admin
 from ..tickets.models import WebhookSubscription, WebhookDeliveryLog
 from ..webhooks import payloads as webhook_payloads
 from ..webhooks import service as webhook_service
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 internal_router = APIRouter(prefix="/internal/webhooks", tags=["webhooks"])
-
-
-def _ensure_admin_or_owner(user: models.User) -> None:
-    if user.role not in {models.RoleEnum.ADMIN, models.RoleEnum.OWNER}:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin or Owner required")
 
 
 def _normalize_headers(headers: dict[str, Any] | None) -> dict[str, str] | None:
@@ -74,12 +69,11 @@ def _to_read(subscription: WebhookSubscription) -> schemas.WebhookRead:
 @router.get("", response_model=list[schemas.WebhookRead])
 def list_webhooks(
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_active_user),
+    current_user: models.User = Depends(get_current_api_admin),
 ) -> list[schemas.WebhookRead]:
-    _ensure_admin_or_owner(current_user)
     stmt = (
         select(WebhookSubscription)
-        .where(WebhookSubscription.deleted_at.is_(None))
+        .where(WebhookSubscription.deleted_at.is_(None), WebhookSubscription.tenant_id == current_user.tenant_id)
         .order_by(WebhookSubscription.created_at.desc())
     )
     subscriptions = db.execute(stmt).scalars().all()
@@ -90,16 +84,14 @@ def list_webhooks(
 def create_webhook(
     payload: schemas.WebhookCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_active_user),
+    current_user: models.User = Depends(get_current_api_admin),
 ) -> schemas.WebhookRead:
-    _ensure_admin_or_owner(current_user)
     if not payload.subscribed_events:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one event is required")
     _validate_events(payload.subscribed_events)
 
-    settings = get_settings()
     subscription = WebhookSubscription(
-        tenant_id=uuid.UUID(settings.default_tenant_id),
+        tenant_id=current_user.tenant_id,
         name=payload.name,
         target_url=str(payload.url),
         secret=secrets.token_urlsafe(32),
@@ -115,14 +107,13 @@ def create_webhook(
 
 @router.put("/{webhook_id}", response_model=schemas.WebhookRead)
 def update_webhook(
-    webhook_id: str,
+    webhook_id: uuid.UUID,
     payload: schemas.WebhookUpdate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_active_user),
+    current_user: models.User = Depends(get_current_api_admin),
 ) -> schemas.WebhookRead:
-    _ensure_admin_or_owner(current_user)
     subscription = db.get(WebhookSubscription, webhook_id)
-    if not subscription or subscription.deleted_at is not None:
+    if not subscription or subscription.deleted_at is not None or subscription.tenant_id != current_user.tenant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook not found")
 
     update_data = payload.model_dump(exclude_unset=True)
@@ -148,13 +139,12 @@ def update_webhook(
 
 @router.delete("/{webhook_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
 def delete_webhook(
-    webhook_id: str,
+    webhook_id: uuid.UUID,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_active_user),
+    current_user: models.User = Depends(get_current_api_admin),
 ) -> Response:
-    _ensure_admin_or_owner(current_user)
     subscription = db.get(WebhookSubscription, webhook_id)
-    if not subscription or subscription.deleted_at is not None:
+    if not subscription or subscription.deleted_at is not None or subscription.tenant_id != current_user.tenant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook not found")
     subscription.enabled = False
     subscription.deleted_at = datetime.utcnow()
@@ -164,14 +154,13 @@ def delete_webhook(
 
 @router.post("/{webhook_id}/test", response_model=schemas.WebhookTestResponse)
 def test_webhook(
-    webhook_id: str,
+    webhook_id: uuid.UUID,
     payload: schemas.WebhookTestRequest,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_active_user),
+    current_user: models.User = Depends(get_current_api_admin),
 ) -> schemas.WebhookTestResponse:
-    _ensure_admin_or_owner(current_user)
     subscription = db.get(WebhookSubscription, webhook_id)
-    if not subscription or subscription.deleted_at is not None:
+    if not subscription or subscription.deleted_at is not None or subscription.tenant_id != current_user.tenant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook not found")
 
     event_name = payload.event_name
@@ -183,7 +172,7 @@ def test_webhook(
     if not event_name:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Webhook has no events to test")
     _validate_events([event_name])
-    data = webhook_payloads.get_sample_data(db, event_name)
+    data = {"message": "Synthetic webhook test", "tenant_id": str(current_user.tenant_id)}
     log = webhook_service.create_test_delivery(db, webhook=subscription, event_name=event_name, data=data)
     return schemas.WebhookTestResponse(
         status_code=log.response_status,
@@ -199,14 +188,13 @@ def list_webhook_deliveries(
     page: int = 1,
     page_size: int = 25,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_active_user),
+    current_user: models.User = Depends(get_current_api_admin),
 ) -> schemas.WebhookDeliveryLogPage:
-    _ensure_admin_or_owner(current_user)
     page = max(page, 1)
     page_size = min(max(page_size, 1), 100)
     stmt = (
         select(WebhookDeliveryLog)
-        .where(WebhookDeliveryLog.deleted_at.is_(None))
+        .where(WebhookDeliveryLog.deleted_at.is_(None), WebhookDeliveryLog.tenant_id == current_user.tenant_id)
         .order_by(WebhookDeliveryLog.created_at.desc())
     )
     total = db.execute(select(sa.func.count()).select_from(stmt.subquery())).scalar_one()
@@ -237,13 +225,12 @@ def list_webhook_deliveries(
 def dispatch_internal_event(
     payload: schemas.WebhookDispatchRequest,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_active_user),
+    current_user: models.User = Depends(get_current_api_admin),
 ) -> dict[str, Any]:
-    _ensure_admin_or_owner(current_user)
     event_name = payload.event
     _validate_events([event_name])
-    data = payload.data or webhook_payloads.get_sample_data(db, event_name)
-    created = webhook_service.queue_event(db, event_name=event_name, data=data)
+    data = payload.data or {"message": "Synthetic webhook test"}
+    created = webhook_service.queue_event(db, event_name=event_name, data=data, tenant_id=current_user.tenant_id)
     if created:
         db.commit()
     return {"queued": len(created)}

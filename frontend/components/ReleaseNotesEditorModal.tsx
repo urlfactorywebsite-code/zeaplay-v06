@@ -1,3 +1,4 @@
+import { APP_DISPLAY_NAME, releaseVersionLabel } from '../utils/appVersion';
 import React from 'react';
 import { XMarkIcon } from './icons';
 import { ReleaseNotes, ReleaseNotesMode, ReleaseNotesUpdate } from '../types';
@@ -41,7 +42,7 @@ const ReleaseNotesEditorModal: React.FC<ReleaseNotesEditorModalProps> = ({
 
   React.useEffect(() => {
     if (!isOpen) return;
-    setVersionLabel(releaseNotes?.versionLabel ?? '2026 Zea.Play V1.1.2');
+    setVersionLabel(releaseVersionLabel(releaseNotes?.versionLabel));
     setContentMode(releaseNotes?.contentMode ?? 'text');
     setDetailsText(releaseNotes?.detailsText ?? '');
     setHtml(releaseNotes?.html ?? '');
@@ -109,7 +110,7 @@ const ReleaseNotesEditorModal: React.FC<ReleaseNotesEditorModalProps> = ({
                 value={versionLabel}
                 onChange={(event) => setVersionLabel(event.target.value)}
                 className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/60"
-                placeholder="2026 Zea.Play V1.1.2"
+                placeholder={APP_DISPLAY_NAME}
               />
             </div>
             <div className="flex gap-2">

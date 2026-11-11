@@ -1,0 +1,188 @@
+{
+  "browser": {
+    "checks": [
+      {
+        "name": "Authoritative unread count includes notifications beyond visible page",
+        "result": "PASS"
+      },
+      {
+        "name": "StrictMode leaves one shared task socket",
+        "result": "PASS"
+      },
+      {
+        "name": "StrictMode and initial socket connection coalesce to one inbox read",
+        "result": "PASS"
+      },
+      {
+        "name": "No automatic permission request or historical browser replay",
+        "result": "PASS"
+      },
+      {
+        "name": "Denied browser retains in-app unread alert",
+        "result": "PASS"
+      },
+      {
+        "name": "Denied browser produces no browser notification or default sound",
+        "result": "PASS"
+      },
+      {
+        "name": "Granted permission uses browser delivery",
+        "result": "PASS"
+      },
+      {
+        "name": "Sound defaults off",
+        "result": "PASS"
+      },
+      {
+        "name": "One hundred realtime events coalesce to one inbox read",
+        "result": "PASS"
+      },
+      {
+        "name": "Repeated state produces no duplicate browser alert",
+        "result": "PASS"
+      },
+      {
+        "name": "Enabled sound produces one short audio presentation",
+        "result": "PASS"
+      },
+      {
+        "name": "Quiet hours suppress browser and sound while keeping unread state",
+        "result": "PASS"
+      },
+      {
+        "name": "Disabled task push suppresses browser without losing inbox",
+        "result": "PASS"
+      },
+      {
+        "name": "Failed inbox refetch preserves last readable state",
+        "result": "PASS"
+      },
+      {
+        "name": "Online recovery refetches authoritative unread count",
+        "result": "PASS"
+      },
+      {
+        "name": "Keyboard opens existing notification center",
+        "result": "PASS"
+      },
+      {
+        "name": "Escape closes notification center and restores focus",
+        "result": "PASS"
+      },
+      {
+        "name": "Notification opens the relevant task through the existing callback",
+        "result": "PASS"
+      },
+      {
+        "name": "Read action updates authoritative badge",
+        "result": "PASS"
+      },
+      {
+        "name": "Session change clears private notification preview",
+        "result": "PASS"
+      },
+      {
+        "name": "Role change clears private notification preview",
+        "result": "PASS"
+      },
+      {
+        "name": "Incomplete quiet-hour range gives useful error",
+        "result": "PASS"
+      },
+      {
+        "name": "Workload preference save preserves explicit capacity and sound",
+        "result": "PASS"
+      },
+      {
+        "name": "Activity popup uses configurable approaching-deadline window",
+        "result": "PASS"
+      },
+      {
+        "name": "Header activity explains estimated overload",
+        "result": "PASS"
+      },
+      {
+        "name": "Workload form has no automated accessibility violations excluding contrast",
+        "result": "PASS"
+      },
+      {
+        "name": "Mobile navigation exposes unread count before expanding",
+        "result": "PASS"
+      },
+      {
+        "name": "Mobile unread badge remains accessible",
+        "result": "PASS"
+      },
+      {
+        "name": "Mobile preferences fit viewport",
+        "result": "PASS"
+      },
+      {
+        "name": "Mobile notification center stays within the viewport",
+        "result": "PASS"
+      },
+      {
+        "name": "Mobile notifications remain selectable",
+        "result": "PASS"
+      },
+      {
+        "name": "Unmount removes inbox event listeners and shared socket",
+        "result": "PASS"
+      },
+      {
+        "name": "No browser permission prompt during all scenarios",
+        "result": "PASS"
+      }
+    ],
+    "accessibility": {
+      "violations": [],
+      "incomplete": []
+    },
+    "fixture": "Actual Header, hooks, activity dialog and workload preferences under StrictMode; synthetic API and transports"
+  },
+  "two_tabs": {
+    "checks": [
+      {
+        "name": "Two visible tabs present one browser notification",
+        "result": "PASS"
+      },
+      {
+        "name": "Two visible tabs play one enabled sound",
+        "result": "PASS"
+      },
+      {
+        "name": "Multiple tabs never request browser permission",
+        "result": "PASS"
+      },
+      {
+        "name": "Browser supports shared Web Locks deduplication",
+        "result": "PASS"
+      }
+    ],
+    "totals": [
+      {
+        "shown": 0,
+        "sounds": 0,
+        "prompts": 0,
+        "locks": true
+      },
+      {
+        "shown": 1,
+        "sounds": 1,
+        "prompts": 0,
+        "locks": true
+      }
+    ]
+  },
+  "additional": {
+    "notificationControlsAccessibility": {
+      "violations": [],
+      "incomplete": []
+    },
+    "mobileBounds": {
+      "left": 32.79999923706055,
+      "right": 352.79999923706055,
+      "width": 390
+    }
+  }
+}

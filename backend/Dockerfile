@@ -3,6 +3,8 @@
 # ----------------------------
 FROM python:3.11-slim AS base
 
+LABEL org.opencontainers.image.version="6.1.7"
+
 # Environment variables for reliability
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -33,7 +35,7 @@ RUN pip install --upgrade pip && \
 # ----------------------------
 COPY . .
 
-EXPOSE 6211
+EXPOSE 7211
 
 # Use production-ready Uvicorn command
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "6211"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "7211"]

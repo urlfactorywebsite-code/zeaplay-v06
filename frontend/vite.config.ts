@@ -7,11 +7,15 @@ export default defineConfig(({ mode }) => {
     const apiBaseUrl = env.VITE_API_BASE_URL || '/api';
     const devProxyTarget =
       env.VITE_API_PROXY_TARGET ||
-      (apiBaseUrl.startsWith('http') ? apiBaseUrl : 'http://localhost:6211');
+      (apiBaseUrl.startsWith('http') ? apiBaseUrl : 'http://localhost:7211');
 
     return {
       server: {
+<<<<<<< ours
         port: 6300,
+=======
+        port: 7300,
+>>>>>>> theirs
         host: '0.0.0.0',
         proxy: {
           '/api': {
@@ -22,12 +26,16 @@ export default defineConfig(({ mode }) => {
           },
         },
       },
-      plugins: [react()],
-      define: {
-        'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY || env.VITE_GEMINI_API_KEYS || ''),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || env.VITE_GEMINI_API_KEYS || ''),
-        'process.env.GEMINI_API_KEYS': JSON.stringify(env.VITE_GEMINI_API_KEYS || env.GEMINI_API_KEY || '')
-      },
+      plugins: [react(), {
+        name: 'private-provider-credentials',
+        configResolved(config) {
+          // VITE_ values are public, including when code reads the entire env
+          // object. Exclude legacy credential variables from every client build.
+          for (const key of Object.keys(config.env)) {
+            if (/GEMINI_API_KEY/.test(key)) delete config.env[key];
+          }
+        },
+      }],
       resolve: {
         alias: {
           '@': path.resolve(__dirname, '.'),

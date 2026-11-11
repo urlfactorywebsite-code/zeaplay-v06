@@ -1,21 +1,13 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { motion } from 'framer-motion';
-import { GoogleGenAI } from '@google/genai';
-import { 
-    LineChart, 
-    Line, 
-    XAxis, 
-    YAxis, 
-    Tooltip, 
-    ResponsiveContainer 
-} from 'recharts';
 import { Task, User, Role, TaskStatus, CUSTOM_STATUS_NAMES } from '../types';
 import { useAuth } from '../hooks/useAuth';
 import api from '../services/mockApi';
-import { withGeminiKey } from '../utils/geminiClient';
+import { withAiClient } from '../utils/geminiClient';
 import { formatDate } from '../utils';
 import PageLoader from '../components/loading/PageLoader';
+import { summarizeSubtaskRewards } from '../utils/subtaskRewardSummary';
+import { TASKS_CHANGED_EVENT } from '../utils/taskEvents';
 
 const StatCard: React.FC<{ title: string; value: number | string; delta?: string }> = ({ title, value, delta }) => (
     <div className="bg-surface p-6 rounded-lg border border-border-color">
@@ -155,43 +147,6 @@ const Reports: React.FC = () => {
 
     const { user } = useAuth();
 
-const RechartsLine: React.FC<{ 
-    data: { period: string; created: number; completed?: number }[]; 
-    title: string; 
-    yKey: 'created' | 'completed';
-}> = ({ data, title, yKey }) => (
-    <motion.div
-        className="bg-gradient-to-r from-purple-900 via-indigo-900 to-blue-900 p-6 rounded-lg border border-cyan-400/50 animate-saber-glow shadow-cyan-500/50"
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-    >
-        <h3 className="text-lg font-semibold text-white mb-4">{title}</h3>
-        <div className="w-full h-64">
-            {data.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={data} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                        <XAxis dataKey="period" stroke="#94a3b8" />
-                        <YAxis stroke="#94a3b8" />
-                        <Tooltip />
-                        <Line 
-                            type="monotone" 
-                            dataKey={yKey} 
-                            stroke="#60a5fa" 
-                            strokeWidth={2}
-                            dot={{ fill: '#60a5fa', strokeWidth: 2 }} 
-                        />
-                    </LineChart>
-                </ResponsiveContainer>
-            ) : (
-                <div className="flex items-center justify-center h-full">
-                    <p className="text-gray-400">No data available for the selected period</p>
-                </div>
-            )}
-        </div>
-    </motion.div>
-);
-
 const fetchData = useCallback(async () => {
         if (user && [Role.MANAGER, Role.ADMIN, Role.OWNER].includes(user.role)) {
             setLoadingData(true);
@@ -231,6 +186,11 @@ const fetchData = useCallback(async () => {
 
     useEffect(() => {
         fetchData();
+    }, [fetchData]);
+    useEffect(() => {
+        const refresh = () => { void fetchData(); };
+        window.addEventListener(TASKS_CHANGED_EVENT, refresh);
+        return () => window.removeEventListener(TASKS_CHANGED_EVENT, refresh);
     }, [fetchData]);
 
     const getAssigneeEntries = useCallback(
@@ -584,8 +544,7 @@ const fetchData = useCallback(async () => {
         }
 
         try {
-            const response = await withGeminiKey(async (apiKey) => {
-                const ai = new GoogleGenAI({ apiKey });
+            const response = await withAiClient(async (ai) => {
 
                 const tasksWithAssigneeNames = aiFilteredTasks.map(task => ({
                     title: task.title,
@@ -828,6 +787,8 @@ const fetchData = useCallback(async () => {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                <StatCard title="Subtask XP Earned" value={summarizeSubtaskRewards(filteredTasks, personFilter === 'all' ? undefined : personFilter).earned} delta="Ledger net for selected tasks" />
+                <StatCard title="Subtask Base Available" value={summarizeSubtaskRewards(filteredTasks, personFilter === 'all' ? undefined : personFilter).availableBase} delta="Uncompleted base only; excludes bonuses" />
                 <StatCard title="Total Tasks" value={stats.totalTasks} />
                 <StatCard title="On-Time Completion" value={stats.completionRate} />
                 <StatCard title="In Progress" value={stats.inProgressTasks} />

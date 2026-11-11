@@ -1,11 +1,14 @@
+import { Dialog, DialogPanel, DialogTitle } from '@headlessui/react';
 ﻿
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
+import { useNavigation } from '../hooks/useNavigation';
+import { navigationIcons } from '../utils/navigationIcons';
+import { Menu, Settings as SettingsIcon } from 'lucide-react';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import TaskDetailModal from './TaskDetailModal';
-import SupportFormModal from './SupportFormModal';
 import api from '../services/mockApi';
 import { User, Role, ReleaseNotes, ReleaseNotesUpdate } from '../types';
 import ClaimedRewardModal from './ClaimedRewardModal';
@@ -22,10 +25,11 @@ interface LayoutProps {
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const { user } = useAuth();
+  const { pages, error: navigationError } = useNavigation();
+  const location = useLocation();
   const { theme } = useTheme();
   const [modalTaskId, setModalTaskId] = useState<string | null>(null);
   const [viewingRewardId, setViewingRewardId] = useState<string | null>(null);
-  const [isSupportOpen, setIsSupportOpen] = useState(false);
   const [usersMap, setUsersMap] = useState<Map<string, User>>(new Map());
   const [isSidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -75,11 +79,12 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         cancelled = true;
       };
     }
-    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
-      const idleId = window.requestIdleCallback(run);
+    const idleWindow = window;
+    if ('requestIdleCallback' in idleWindow) {
+      const idleId = idleWindow.requestIdleCallback(run);
       return () => {
         cancelled = true;
-        window.cancelIdleCallback(idleId);
+        idleWindow.cancelIdleCallback(idleId);
       };
     }
     const timeoutId = window.setTimeout(run, 150);
@@ -111,17 +116,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   }, []);
 
   useEffect(() => {
-    if (!isMobileMenuOpen) {
-      return;
-    }
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setMobileMenuOpen(false);
-      }
-    };
-    document.addEventListener('keydown', handleKey);
-    return () => document.removeEventListener('keydown', handleKey);
-  }, [isMobileMenuOpen]);
+    const desktop = window.matchMedia('(min-width: 1024px)');
+    const closeOnDesktop = () => { if (desktop.matches) setMobileMenuOpen(false); };
+    desktop.addEventListener('change', closeOnDesktop);
+    return () => desktop.removeEventListener('change', closeOnDesktop);
+  }, []);
 
   const handleCloseModal = () => {
     setModalTaskId(null);
@@ -137,37 +136,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   const isOwner = user?.role === Role.OWNER;
 
-  const mobileLinks = useMemo(() => {
-    const links = [
-      { to: '/dashboard', label: 'Dashboard', icon: 'https://res.cloudinary.com/dqhcbck76/image/upload/v1770241422/dashboard_pvjlbg.png' },
-      { to: '/tasks', label: 'Tasks', icon: 'https://res.cloudinary.com/dqhcbck76/image/upload/v1770241423/task-actions_urhfeq.png' },
-      { to: '/kanban', label: 'Kanban', icon: 'https://res.cloudinary.com/dqhcbck76/image/upload/v1770241422/kanban_ysnojm.png' },
-      { to: '/tickets', label: 'Tickets', icon: 'https://res.cloudinary.com/dqhcbck76/image/upload/v1770343495/support-ticket_fku5gp.png' },
-      { to: '/calendar', label: 'Calendar', icon: 'https://res.cloudinary.com/dqhcbck76/image/upload/v1770241422/calendar_xbhksz.png' },
-      { to: '/media', label: 'Media', icon: 'https://res.cloudinary.com/dqhcbck76/image/upload/v1770241422/Media_Library_em2ky8.png' },
-      { to: '/tool-library', label: 'Tools', icon: 'https://res.cloudinary.com/dqhcbck76/image/upload/v1770623739/open-box_ljkslo.png' },
-    ];
-    if (user?.role === Role.MANAGER || user?.role === Role.ADMIN || user?.role === Role.OWNER) {
-      links.push(
-        { to: '/admin/users', label: 'Users', icon: 'https://res.cloudinary.com/dqhcbck76/image/upload/v1770241423/Users_b58wty.png' },
-        { to: '/gantt', label: 'Gantt', icon: 'https://res.cloudinary.com/dqhcbck76/image/upload/v1770343495/gantt-chart_gjwr5s.png' },
-        { to: '/reports', label: 'Reports', icon: 'https://res.cloudinary.com/dqhcbck76/image/upload/v1770343494/report_boqlo0.png' },
-        { to: '/logs', label: 'Logs', icon: 'https://res.cloudinary.com/dqhcbck76/image/upload/v1770623653/log_cbtgmr.png' },
-      );
-    }
-    if (user?.role === Role.OWNER) {
-      links.push(
-        { to: '/admin/points-table', label: 'Points', icon: 'https://res.cloudinary.com/dqhcbck76/image/upload/v1770241423/points_jgi3yh.png' },
-        { to: '/template-editor', label: 'Templates', icon: 'https://res.cloudinary.com/dqhcbck76/image/upload/v1770241423/layout_xgg1fa.png' },
-        { to: '/api/overview', label: 'API', icon: 'https://res.cloudinary.com/dqhcbck76/image/upload/v1770241421/api_bhcggn.png' },
-      );
-    }
-    links.push(
-      { to: '/achievements', label: 'Achievements', icon: 'https://res.cloudinary.com/dqhcbck76/image/upload/v1770241421/achivement_ckvs6i.png' },
-      { to: '/levels', label: 'Levels', icon: 'https://res.cloudinary.com/dqhcbck76/image/upload/v1770241421/level-up_l6lcwq.png' },
-    );
-    return links;
-  }, [user]);
+  const mobileLinks = useMemo(() => navigationError ? [] : pages.filter(page => page.navigationLocation === 'sidebar' && page.mobile && page.visible).map(page => ({ to: page.route, label: page.label, icon: navigationIcons[page.icon] || '' })), [pages, navigationError]);
 
   const bottomBarLinks = useMemo(
     () => mobileLinks.filter((link) => ['/dashboard', '/tasks', '/kanban'].includes(String(link.to))),
@@ -218,12 +187,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         <Header 
         onNotificationClick={(taskId) => taskId && setModalTaskId(taskId)}
         onRewardNotificationClick={(rewardId) => rewardId && setViewingRewardId(rewardId)}
-        onSupportClick={() => setIsSupportOpen(true)}
       />
       <div className="flex flex-1 overflow-hidden">
         <div className="hidden lg:block">
           <Sidebar
-            onSupportClick={() => setIsSupportOpen(true)}
             isCollapsed={isSidebarCollapsed}
             onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
             onVersionClick={handleOpenReleaseNotes}
@@ -232,7 +199,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         </div>
         <main
           key={refreshKey}
-          className={`layout-main-surface flex-1 overflow-x-hidden overflow-y-auto bg-background pt-4 pr-4 pb-24 pl-4 sm:pt-6 sm:pr-6 sm:pb-24 sm:pl-6 lg:p-6 ${theme === 'colorful' ? 'layout-main-colorful' : ''}`}
+          className={`layout-main-surface min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-background pt-4 pr-4 pb-24 pl-4 sm:pt-6 sm:pr-6 sm:pb-24 sm:pl-6 lg:p-6 ${theme === 'colorful' ? 'layout-main-colorful' : ''}`}
         >
         <style>
           {`
@@ -253,6 +220,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             }
           `}
         </style>
+        {location.state?.navigationDenial && <div role="alert" className="mb-4 rounded-xl border border-amber-500/50 bg-surface p-4 text-text-primary">{location.state.navigationDenial}</div>}
         {children}
       </main>
       </div>
@@ -268,9 +236,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             type="button"
             onClick={() => setMobileMenuOpen((prev) => !prev)}
             className="mobile-nav-center"
-            aria-label="Open menu"
+            aria-label="Open pages menu"
+            aria-expanded={isMobileMenuOpen}
+            aria-controls="mobile-pages-menu"
           >
-            <span className="text-xl">â‰¡</span>
+            <Menu className="h-5 w-5" aria-hidden="true" />
           </button>
           {bottomBarLinks.slice(2, 4).map((link) => (
             <NavLink key={String(link.to)} to={link.to} className="mobile-nav-item" onClick={() => setMobileMenuOpen(false)}>
@@ -280,14 +250,16 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           ))}
         </div>
         {isMobileMenuOpen && (
-          <div className="mobile-menu-overlay">
-            <div className="mobile-menu-card">
+          <Dialog open={isMobileMenuOpen} onClose={() => setMobileMenuOpen(false)} className="fixed inset-0 z-[80]">
+          <div className="mobile-menu-overlay" style={{ zIndex: 80 }}>
+            <DialogPanel id="mobile-pages-menu" className="mobile-menu-card">
               <div className="mobile-menu-header">
-                <span>Pages</span>
+                <DialogTitle>Pages</DialogTitle>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => setMobileMenuView('grid')}
+                    aria-pressed={mobileMenuView === 'grid'}
                     className={`mobile-menu-toggle ${mobileMenuView === 'grid' ? 'mobile-menu-toggle-active' : ''}`}
                   >
                     Grid
@@ -295,6 +267,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   <button
                     type="button"
                     onClick={() => setMobileMenuView('list')}
+                    aria-pressed={mobileMenuView === 'list'}
                     className={`mobile-menu-toggle ${mobileMenuView === 'list' ? 'mobile-menu-toggle-active' : ''}`}
                   >
                     List
@@ -309,16 +282,17 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   <NavLink
                     key={String(link.to)}
                     to={link.to}
-                    className="mobile-menu-link"
+                    className={({ isActive }) => `mobile-menu-link ${link.to === '/settings' && isActive ? 'ring-2 ring-primary' : ''}`}
                     onClick={() => setMobileMenuOpen(false)}
                   >
-                    <img src={link.icon} alt={link.label} className="h-6 w-6" />
+                    {link.to === '/settings' ? <SettingsIcon className="h-6 w-6" aria-hidden="true" /> : <img src={link.icon} alt={link.label} className="h-6 w-6" />}
                     <span>{link.label}</span>
                   </NavLink>
                 ))}
               </div>
-            </div>
+            </DialogPanel>
           </div>
+          </Dialog>
         )}
       </div>
        {modalTaskId && (
@@ -335,12 +309,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             isOpen={!!viewingRewardId}
             rewardId={viewingRewardId}
             onClose={handleCloseRewardModal}
-        />
-      )}
-      {isSupportOpen && (
-        <SupportFormModal
-          isOpen={isSupportOpen}
-          onClose={() => setIsSupportOpen(false)}
         />
       )}
       {isReleaseNotesOpen && (

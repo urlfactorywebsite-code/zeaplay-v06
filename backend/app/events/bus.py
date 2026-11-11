@@ -202,6 +202,7 @@ def emit_ticket_event(
             db,
             event_name=event_type,
             data=webhook_data,
+            tenant_id=ticket.tenant_id,
         )
 
         if created_notifications or created_webhooks:

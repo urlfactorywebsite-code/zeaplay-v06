@@ -27,7 +27,7 @@ def subscribe(
 ) -> Response:
     if not payload.endpoint or not payload.keys:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid subscription payload")
-    push_service.save_subscription(
+    subscription = push_service.save_subscription(
         db,
         user_id=str(current_user.id),
         endpoint=payload.endpoint,
@@ -35,9 +35,11 @@ def subscribe(
         auth=payload.keys.auth,
         user_agent=payload.user_agent,
         device_label=payload.device_label,
+        binding_protocol=payload.binding_protocol,
     )
     db.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    headers = {"X-Zea-Push-Binding": subscription.binding_key} if subscription.binding_key else {}
+    return Response(status_code=status.HTTP_204_NO_CONTENT, headers=headers)
 
 
 @router.post("/unsubscribe", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
@@ -46,7 +48,7 @@ def unsubscribe(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user),
 ) -> Response:
-    revoked = push_service.revoke_subscription(db, endpoint=payload.endpoint)
+    revoked = push_service.revoke_subscription(db, endpoint=payload.endpoint, user_id=str(current_user.id))
     if revoked:
         db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

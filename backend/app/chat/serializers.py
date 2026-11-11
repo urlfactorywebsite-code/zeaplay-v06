@@ -1,4 +1,5 @@
 from .. import models, schemas
+from ..avatar_utils import user_avatar_url
 
 
 def serialize_member(member: models.ChatParticipant) -> schemas.ChatMemberRead:
@@ -9,7 +10,8 @@ def serialize_member(member: models.ChatParticipant) -> schemas.ChatMemberRead:
         user_id=member.user_id,
         name=user.name if user else "Unknown user",
         email=user.email if user else "",
-        avatar_url=user.profile_image_url if user else None,
+        avatar_url=user_avatar_url(user) if user else None,
+        avatar_frame=user.avatar_frame if user else None,
         title=user.title if user else None,
         department_name=user.department.name if user and user.department else None,
         account_status=user.status if user else models.UserStatusEnum.DEACTIVATED,

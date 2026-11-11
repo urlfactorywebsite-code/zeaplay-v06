@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .wallet import adjust as adjust_wallet
+
 from datetime import datetime, timezone
 from math import ceil
 from typing import Dict, List, Optional, Tuple
@@ -408,6 +410,14 @@ def claim_reward(
     reward_id: str,
     user: models.User,
 ) -> schemas.RewardClaimRead:
+    # Serialize eligibility and the optional single-claim check with the debit.
+    # SQL arithmetic alone protects the balance, not duplicate claim rows.
+    _begin_wallet_write(db)
+    user = db.scalar(select(models.User).where(models.User.id == user.id,
+        models.User.tenant_id == user.tenant_id).with_for_update()
+        .execution_options(populate_existing=True))
+    if not user or user.status != models.UserStatusEnum.ACTIVE:
+        raise HTTPException(403, "An active claimant is required")
     reward = get_reward(db, reward_id)
     _assert_reward_claimable(reward, user)
     existing = (
@@ -431,7 +441,7 @@ def claim_reward(
         xp_spent=reward.xp_required,
         resolved_at=resolved_at,
     )
-    user.points = max((user.points or 0) - claim.xp_spent, 0)
+    adjust_wallet(db, user, -claim.xp_spent, require_nonnegative=True)
     db.add(user)
     if not reward.allow_multiple_claims and reward.id not in (user.claimed_reward_ids or []):
         user.claimed_reward_ids = [*(user.claimed_reward_ids or []), reward.id]
@@ -482,13 +492,16 @@ def claim_reward(
 def list_claims(
     db: Session,
     *,
+    actor: models.User,
     status_filter: Optional[models.RewardClaimStatusEnum] = None,
     page: int = 1,
     page_size: int = DEFAULT_PAGE_SIZE,
 ) -> schemas.RewardClaimListResponse:
+    actor = _claim_admin(db, actor)
     page, page_size = _paginate(page, page_size)
     query = (
         db.query(models.RewardClaim)
+        .filter(models.RewardClaim.user.has(models.User.tenant_id == actor.tenant_id))
         .options(joinedload(models.RewardClaim.reward), joinedload(models.RewardClaim.user))
         .order_by(models.RewardClaim.claimed_at.desc())
     )
@@ -519,10 +532,41 @@ def _resolve_claim(
     claim.resolved_at = _utc_now()
 
 
+def _begin_wallet_write(db):
+    connection = db.connection()
+    if connection.dialect.name == "sqlite" and not connection.connection.driver_connection.in_transaction:
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+
+
+def _claim_admin(db, actor, *, allow_manager=False):
+    actor = db.scalar(select(models.User).where(models.User.id == actor.id)
+                      .execution_options(populate_existing=True))
+    roles = {models.RoleEnum.OWNER, models.RoleEnum.ADMIN}
+    if allow_manager:
+        roles.add(models.RoleEnum.MANAGER)
+    if not actor or actor.status != models.UserStatusEnum.ACTIVE or actor.role not in roles:
+        raise HTTPException(403, "An active Owner or Admin is required")
+    return actor
+
+
+def _locked_claim(db, claim_id, actor):
+    _begin_wallet_write(db)
+    actor = _claim_admin(db, actor)
+    # All claim writes lock recipient before claim, including refunds, to avoid
+    # opposite lock order with simultaneous claims against the same wallet.
+    recipient = db.scalar(select(models.User).join(models.RewardClaim,
+        models.RewardClaim.user_id == models.User.id).where(
+            models.RewardClaim.id == claim_id, models.User.tenant_id == actor.tenant_id)
+        .with_for_update(of=models.User).execution_options(populate_existing=True))
+    if not recipient:
+        raise HTTPException(404, "Claim not found")
+    claim = db.scalar(select(models.RewardClaim).where(models.RewardClaim.id == claim_id)
+        .with_for_update().execution_options(populate_existing=True))
+    return claim
+
+
 def approve_claim(db: Session, *, claim_id: str, actor: models.User) -> schemas.RewardClaimRead:
-    claim = db.get(models.RewardClaim, claim_id)
-    if not claim:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
+    claim = _locked_claim(db, claim_id, actor)
     if claim.status != models.RewardClaimStatusEnum.PENDING:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Claim already resolved")
     _resolve_claim(claim, new_status=models.RewardClaimStatusEnum.REDEEMED, actor=actor)
@@ -549,16 +593,14 @@ def approve_claim(db: Session, *, claim_id: str, actor: models.User) -> schemas.
 
 
 def reject_claim(db: Session, *, claim_id: str, actor: models.User) -> schemas.RewardClaimRead:
-    claim = db.get(models.RewardClaim, claim_id)
-    if not claim:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
+    claim = _locked_claim(db, claim_id, actor)
     if claim.status != models.RewardClaimStatusEnum.PENDING:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Claim already resolved")
     _resolve_claim(claim, new_status=models.RewardClaimStatusEnum.REJECTED, actor=actor)
     db.add(claim)
     reward = get_reward(db, claim.reward_id)
     claimant = claim.user
-    claimant.points = (claimant.points or 0) + claim.xp_spent
+    adjust_wallet(db, claimant, claim.xp_spent)
     db.add(claimant)
     if reward.id in (claimant.claimed_reward_ids or []):
         claimant.claimed_reward_ids = [reward_id for reward_id in claimant.claimed_reward_ids if reward_id != reward.id]
@@ -578,14 +620,20 @@ def reject_claim(db: Session, *, claim_id: str, actor: models.User) -> schemas.R
 def list_logs(
     db: Session,
     *,
+    actor: models.User,
     subject_type: Optional[str] = None,
     subject_id: Optional[str] = None,
     action: Optional[models.RewardLogActionEnum] = None,
     page: int = 1,
     page_size: int = DEFAULT_PAGE_SIZE,
 ) -> schemas.RewardLogListResponse:
+    actor = _claim_admin(db, actor, allow_manager=True)
     page, page_size = _paginate(page, page_size)
-    query = db.query(models.RewardLog).order_by(models.RewardLog.created_at.desc())
+    # This legacy table has no tenant key. Scope through its actor; actorless
+    # records cannot safely be attributed and must not disclose claim metadata.
+    query = db.query(models.RewardLog).filter(
+        models.RewardLog.actor.has(models.User.tenant_id == actor.tenant_id)
+    ).order_by(models.RewardLog.created_at.desc())
     if subject_type:
         query = query.filter(models.RewardLog.subject_type == subject_type)
     if subject_id:

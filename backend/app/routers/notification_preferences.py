@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -18,6 +18,7 @@ MODULES: list[schemas.NotificationModule] = [
     "users",
     "departments",
     "comments",
+    "chat",
 ]
 
 
@@ -38,6 +39,10 @@ def list_preferences(
                 module=module,
                 push_enabled=pref.push_enabled if pref else True,
                 updated_at=pref.updated_at if pref else None,
+                **({key: getattr(pref, key) for key in (
+                    "sound_enabled", "near_deadline_hours", "productive_capacity_hours",
+                    "overtime_threshold_minutes", "quiet_start", "quiet_end"
+                )} if pref else {}),
             )
         )
     return response
@@ -50,6 +55,12 @@ def update_preferences(
     current_user: models.User = Depends(get_current_active_user),
 ) -> list[schemas.NotificationPreferenceRead]:
     now = datetime.now(timezone.utc)
+    # Serialize first-time inserts and partial preference updates across tabs.
+    # Reuse the activity system's SQLite write admission / user-row lock pattern.
+    connection = db.connection()
+    if connection.dialect.name == "sqlite" and not connection.connection.driver_connection.in_transaction:
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+    db.execute(select(models.User.id).where(models.User.id == current_user.id).with_for_update()).one()
     prefs = db.execute(
         select(models.NotificationPreference).where(models.NotificationPreference.user_id == current_user.id)
     ).scalars().all()
@@ -57,17 +68,33 @@ def update_preferences(
 
     for update in payload.preferences:
         existing = pref_map.get(update.module)
+        values = update.model_dump(exclude_unset=True, exclude={"module"})
+        # Null clears only optional overrides, never required policy defaults.
+        for key in ("sound_enabled", "near_deadline_hours", "overtime_threshold_minutes"):
+            if values.get(key, False) is None:
+                values.pop(key)
+        start = values.get("quiet_start", existing.quiet_start if existing else None)
+        end = values.get("quiet_end", existing.quiet_end if existing else None)
+        if bool(start) != bool(end):
+            raise HTTPException(422, "Enter both quiet-hour times or clear both")
         if existing:
-            existing.push_enabled = update.push_enabled
+            for key, value in values.items():
+                setattr(existing, key, value)
             existing.updated_at = now
         else:
-            db.add(
-                models.NotificationPreference(
+            existing = models.NotificationPreference(
                     user_id=str(current_user.id),
                     module=update.module,
-                    push_enabled=update.push_enabled,
+                    **values,
                     updated_at=now,
                 )
-            )
+            db.add(existing)
+            pref_map[update.module] = existing
     db.commit()
+    from ..services.task_events import publish_task_event
+    for kind in ("notifications.changed", "work.changed"):
+        try:
+            publish_task_event({"type": kind, "tenant_id": str(current_user.tenant_id), "user_id": current_user.id})
+        except Exception:  # noqa: BLE001 -- committed preferences survive an unavailable optional stream
+            pass  # Existing foreground/reconnect refetch remains authoritative.
     return list_preferences(db=db, current_user=current_user)

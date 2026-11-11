@@ -1,0 +1,6 @@
+{
+  "test": "test_long_child_history_does_not_exceed_sql_expression_depth",
+  "baseline": "FAIL: SQLite Expression tree is too large (maximum depth 1000)",
+  "fixture": "1100 synthetic paused child contexts",
+  "optimized": "PASS on SQLite and PostgreSQL"
+}

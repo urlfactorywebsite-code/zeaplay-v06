@@ -1,0 +1,19 @@
+{
+  "backend/app/services/task_activity.py": "d1e1a66e2090acd82253fd3600de2fd58e69406cc22c14e0e891ab38e347ad6b",
+  "backend/app/services/subtask_rewards.py": "4ed4260e2c1d1ee39635e1f98e0f7037888cfc96967798773bf52af66a448724",
+  "backend/app/ws/tasks.py": "070e866d7bb17b0443f0ed0a21b8c35b30fda56dc140f2ac596ad1b4b3ea5cc1",
+  "backend/app/routers/tasks.py": "1c8c1c1854402387de691b383e84961a3377698e4536af98bd0714e06adbbf0f",
+  "backend/tests/test_task_activity.py": "c38e44f9c149f4ad54b1a5ae30e4e5defeb1abf865099d419456f5f3478548fe",
+  "backend/tests/test_task_activity_audit.py": "607e6f04d08ca0dbee32e8b1d4729426960aadb7e9dc4a73c27b06d52cb5fd35",
+  "frontend/components/Header.tsx": "173d37258a1613a6f6c0ff8d4c57e40d9e5b7c0b496feb1fd54dde735b739302",
+  "frontend/components/TaskActivityControl.tsx": "3fc6a779f65348d121b0138c48d75b45c46d17167b9926f99060d6bc150f99d0",
+  "frontend/components/ActivityElapsed.tsx": "1fbcfee2fbd01b9dc29cf6e54ca7e111d5019f2982d3cd7a0678e933cac9102d",
+  "frontend/hooks/useTaskActivity.ts": "88f1451b7537ff90ea797f2c3498e27046dc3f99988d015841f32624b09fe302",
+  "frontend/hooks/useTaskWebSocket.ts": "43fc87c0ceef58a3ffb6828f287bf6936ed824ee5adfce17822e0790226f266a",
+  "frontend/services/mockApi.ts": "7b84f945654fe5ec22a7c192f8ff6b31f97f5a8af40900a3749830e7f29ff069",
+  "frontend/utils/taskActivity.ts": "4ba757db8d900e8234f89e8d9fbf95ca656cad1bd4e5038f40b35c6e118c1ec0",
+  "frontend/utils/activityClock.ts": "ba160688bbe74bb93a77acfe03426938a4bc61a98d398f0933120cacfc395914",
+  "frontend/utils/activityRefresh.ts": "fc8d18d85c4fc24da3fe4e2d558d8bcccf1eafd265ca325f8e9405ad91408e49",
+  "frontend/utils/taskSocket.ts": "0bf3909f8785bd5416fbe764344b0c3d69772785d6290b43e46d01a587ba340a",
+  "frontend/test/task-activity.test.ts": "db7c072195be0a16c00c16808e2e61307961f09a5408d1d2a90f5c2a9ee5ac18"
+}

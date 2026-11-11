@@ -3,13 +3,14 @@ from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..version import APP_DISPLAY_NAME
 from ..database import get_db
 from ..dependencies import get_current_active_user, get_current_owner
 
 
 router = APIRouter(prefix="/updates", tags=["updates"])
 
-DEFAULT_VERSION_LABEL = "2026 Zea.Play V1.1.2"
+DEFAULT_VERSION_LABEL = APP_DISPLAY_NAME
 DEFAULT_DETAILS = "Add release notes here to share updates with the team."
 
 

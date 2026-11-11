@@ -1,3 +1,8 @@
+import { TASKS_CHANGED_EVENT, notifyTasksChanged } from '../utils/taskEvents';
+import { mapApiSubtask, subtaskCreateRequest, subtaskRequest, type ApiSubtask } from '../utils/subtaskWorkflow';
+import type { SubtaskChanges } from '../types';
+import type { ActivityCommand, ActivitySnapshot, ConfirmedWork, WorkInput } from '../types/taskActivity';
+import type { InformationOptions, TaskInformation } from '../types/taskInformation';
 ﻿ import axios, { AxiosInstance, AxiosHeaders } from 'axios';
 import { TaskCategory } from '../types';
 import type { PointsConfig } from '../utils/pointsConfigStorage';
@@ -186,8 +191,9 @@ import {
   StorageProvider,
 } from '../types';
 import { storeTokens, getAccessToken, getRefreshToken, clearTokens } from './tokenStorage';
+import { clearCredentialHistory, clearLegacyProviderCredentials, LEGACY_CREDENTIAL_HISTORY_KEY } from '../utils/credentialHistory';
 import { augmentTaskWithPoints } from '../utils/taskPoints';
-import { AUTH_EXPIRED_EVENT } from '../utils/appEvents';
+import { AUTH_EXPIRED_EVENT, USER_PROFILE_UPDATED_EVENT } from '../utils/appEvents';
 import {
   setProgress as setGlobalProgress,
   startProgressTask,
@@ -209,9 +215,10 @@ declare module 'axios' {
 }
 
 console.log('mockApi.ts: Setting API_BASE_URL');
+try { clearLegacyProviderCredentials(localStorage); } catch { /* storage may be unavailable */ }
 const API_BASE_URL = (
-  import.meta.env.VITE_API_URL ??
-  import.meta.env.VITE_API_BASE_URL ??
+  import.meta.env?.VITE_API_URL ??
+  import.meta.env?.VITE_API_BASE_URL ??
   'https://todoplay.urlfactory.website/api'
 ).replace(/\/$/, '');
 console.log('mockApi.ts: API_BASE_URL set to:', API_BASE_URL);
@@ -221,12 +228,15 @@ const TICKETS_BASE_PATH = '/tickets';
 type CacheEntry<T> = {
   value: T;
   expiresAt: number;
+  session?: string | null;
 };
 
 const DEFAULT_CACHE_TTL_MS = 60000;
 const DEFAULT_PERSISTED_CACHE_TTL_MS = 5 * 60 * 1000;
 const CACHE_STORAGE_PREFIX = `zea-play-cache:${encodeURIComponent(NORMALIZED_API_BASE_URL)}:`;
 const responseCache = new Map<string, CacheEntry<unknown>>();
+const taskCacheEntry = (key: string) => key.startsWith('task') || key.startsWith('comments:');
+const privateCache = (key: string) => key === 'users' || key === 'avatar-assets' || taskCacheEntry(key);
 const storageAvailable =
   typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
 
@@ -240,6 +250,10 @@ function readPersistedCache<T>(key: string): CacheEntry<T> | null {
   }
   const storageKey = buildStorageKey(key);
   try {
+    if (privateCache(key)) {
+      window.localStorage.removeItem(storageKey);
+      return null;
+    }
     const raw = window.localStorage.getItem(storageKey);
     if (!raw) {
       return null;
@@ -269,6 +283,10 @@ function writePersistedCache<T>(key: string, value: T, ttlMs: number): void {
   }
   const storageKey = buildStorageKey(key);
   try {
+    if (privateCache(key)) {
+      window.localStorage.removeItem(storageKey);
+      return;
+    }
     const entry: CacheEntry<T> = { value, expiresAt: Date.now() + ttlMs };
     window.localStorage.setItem(storageKey, JSON.stringify(entry));
   } catch {
@@ -293,6 +311,10 @@ function buildCacheKey(base: string, params?: Record<string, unknown>): string {
 
 function getCached<T>(key: string): T | null {
   const entry = responseCache.get(key);
+  if (entry && (privateCache(key)) && entry.session !== getAccessToken()) {
+    responseCache.delete(key);
+    return null;
+  }
   if (!entry) {
     const persisted = readPersistedCache<T>(key);
     if (!persisted) {
@@ -315,11 +337,12 @@ function getCached<T>(key: string): T | null {
 
 function setCached<T>(key: string, value: T, ttlMs: number = DEFAULT_CACHE_TTL_MS): void {
   const expiresAt = Date.now() + ttlMs;
-  responseCache.set(key, { value, expiresAt });
+  responseCache.set(key, { value, expiresAt, session: getAccessToken() });
   writePersistedCache(key, value, Math.max(ttlMs, DEFAULT_PERSISTED_CACHE_TTL_MS));
 }
 
 function invalidateCache(prefix: string): void {
+  if (prefix === 'tasks') notifyTasksChanged();
   responseCache.forEach((_value, key) => {
     if (key.startsWith(prefix)) {
       responseCache.delete(key);
@@ -340,7 +363,15 @@ function invalidateCache(prefix: string): void {
   }
 }
 
+if (typeof window !== 'undefined') {
+  window.addEventListener(TASKS_CHANGED_EVENT, () => {
+    invalidateCache('users');
+    responseCache.forEach((_value, key) => { if (taskCacheEntry(key)) responseCache.delete(key); });
+  });
+}
+
 type ApiUser = {
+  profile_bio?: string | null;
   id: string;
   name: string;
   email: string;
@@ -400,6 +431,7 @@ type ApiAvatarAsset = {
 };
 
 type ApiTask = {
+  dependencies?: { id: string; title: string }[];
   id: string;
   title: string;
   description: string;
@@ -421,7 +453,9 @@ type ApiTask = {
   attachments: string[];
   estimated_hours: number | null;
   tags: string[];
-  subtasks: Array<{ id: string; title: string; completed: boolean }>;
+  subtasks: ApiSubtask[];
+  subtask_activity?: Task['subtaskActivity'];
+  subtask_rewards?: Task['subtaskRewards'];
 };
 
 type ApiTaskPageResponse = {
@@ -1138,6 +1172,7 @@ type ApiSeason = {
 };
 
 type ApiNotification = {
+  alert_kind?: string | null;
   id: string;
   user_id: string;
   type: NotificationType;
@@ -1157,6 +1192,12 @@ type ApiNotificationPreference = {
   module: NotificationModule;
   push_enabled: boolean;
   updated_at?: string | null;
+  sound_enabled?: boolean;
+  near_deadline_hours?: number;
+  productive_capacity_hours?: number | null;
+  overtime_threshold_minutes?: number;
+  quiet_start?: string | null;
+  quiet_end?: string | null;
 };
 
 type ApiVapidPublicKey = {
@@ -1175,6 +1216,7 @@ type ApiPushSubscriptionCreate = {
   };
   user_agent?: string | null;
   device_label?: string | null;
+  binding_protocol?: 'user-v1';
 };
 
 type OAuthConfigCreatePayload = {
@@ -1198,6 +1240,7 @@ type OAuthCredentialRotatePayload = {
 
 
 type ApiUserBackup = {
+  profile_bio?: string | null;
   id: string;
   name: string;
   email: string;
@@ -1396,6 +1439,7 @@ type ApiChatMember = {
   name: string;
   email: string;
   avatar_url?: string | null;
+  avatar_frame?: string | null;
   title?: string | null;
   department_name?: string | null;
   account_status?: UserStatus;
@@ -1481,6 +1525,7 @@ type ApiChatDirectoryUser = {
   name: string;
   email: string;
   avatar_url?: string | null;
+  avatar_frame?: string | null;
   presence: 'ONLINE' | 'AWAY' | 'OFFLINE';
   last_seen_at?: string | null;
   role_name?: string | null;
@@ -1498,7 +1543,7 @@ type ApiChatDirectoryPage = {
   next_cursor?: string | null;
 };
 
-const http: AxiosInstance = axios.create({
+export const http: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
 });
 
@@ -1588,6 +1633,11 @@ function mapAxiosError(err: unknown): never {
   throw err;
 }
 
+function publishUserProfile(user: User): User {
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(USER_PROFILE_UPDATED_EVENT, { detail: user }));
+  return user;
+}
+
 function mapAvatarAsset(asset?: ApiAvatarAsset | null): AvatarAsset | null {
   if (!asset) {
     return null;
@@ -1632,6 +1682,7 @@ function mapUser(user: ApiUser): User {
     phone: user.phone ?? undefined,
     location: user.location ?? undefined,
     timezone: user.timezone ?? undefined,
+    profileBio: user.profile_bio ?? null,
     notes: user.notes ?? undefined,
     skills: user.skills ?? undefined,
     projects: user.projects ?? undefined,
@@ -1663,6 +1714,7 @@ function mapChatMember(member: ApiChatMember): ChatMember {
     name: member.name,
     email: member.email,
     avatarUrl: member.avatar_url ?? null,
+    avatarFrame: member.avatar_frame ?? null,
     title: member.title ?? null,
     departmentName: member.department_name ?? null,
     accountStatus: (member.account_status ?? UserStatus.ACTIVE) as UserStatus,
@@ -1682,6 +1734,7 @@ function mapChatDirectoryUser(user: ApiChatDirectoryUser): ChatDirectoryUser {
     name: user.name,
     email: user.email,
     avatarUrl: user.avatar_url ?? null,
+    avatarFrame: user.avatar_frame ?? null,
     presence: user.presence ?? 'OFFLINE',
     lastSeenAt: user.last_seen_at ?? null,
     roleName: user.role_name ?? null,
@@ -1762,18 +1815,13 @@ function toApiChatMessagePayload(payload: ChatMessageCreatePayload) {
   };
 }
 
-function mapSubtask(subtask: { id: string; title: string; completed: boolean }): Subtask {
-  return {
-    id: subtask.id,
-    title: subtask.title,
-    completed: subtask.completed,
-  };
-}
+const mapSubtask = mapApiSubtask;
 
 function mapTask(task: ApiTask): Task {
   const assignedIds = task.assigned_to_ids ?? (task.assigned_to_id ? [task.assigned_to_id] : null);
 
   const mapped: Task = {
+    dependencies: (task.dependencies ?? []).map(({ id, title }) => ({ id, title })),
     id: task.id,
     title: task.title,
     description: task.description ?? '',
@@ -1790,6 +1838,8 @@ function mapTask(task: ApiTask): Task {
     dueAt: task.due_at ?? null,
     completedAt: task.completed_at ?? null,
     subtasks: (task.subtasks ?? []).map(mapSubtask),
+    subtaskActivity: task.subtask_activity ?? [],
+    subtaskRewards: task.subtask_rewards ?? null,
     recurrenceRule: task.recurrence_rule ?? RecurrenceRule.NONE,
     recurringTaskId: task.recurring_task_id ?? null,
     clarityRating: task.clarity_rating ?? null,
@@ -2073,8 +2123,7 @@ function mapSmtpConfig(config: ApiSmtpConfig): SmtpConfig {
 
 function mapApiConfig(config: { provider: string; api_key?: string | null }): ApiConfig {
   const dbApiKey = typeof config.api_key === 'string' ? config.api_key.trim() : '';
-  const envApiKey = (process.env.GEMINI_API_KEY || process.env.API_KEY || '').trim();
-  const resolvedApiKey = dbApiKey || envApiKey || undefined;
+  const resolvedApiKey = dbApiKey || undefined;
   return {
     provider: config.provider,
     apiKey: resolvedApiKey,
@@ -2408,6 +2457,7 @@ function mapNotification(notification: ApiNotification): Notification {
     relatedRewardId: notification.related_reward_id,
     createdAt: notification.created_at,
     source: 'api',
+    alertKind: notification.alert_kind ?? null,
   };
 }
 
@@ -2416,6 +2466,12 @@ function mapNotificationPreference(pref: ApiNotificationPreference): Notificatio
     module: pref.module,
     pushEnabled: pref.push_enabled,
     updatedAt: pref.updated_at ?? null,
+    soundEnabled: pref.sound_enabled ?? false,
+    nearDeadlineHours: pref.near_deadline_hours ?? 24,
+    productiveCapacityHours: pref.productive_capacity_hours ?? null,
+    overtimeThresholdMinutes: pref.overtime_threshold_minutes ?? 0,
+    quietStart: pref.quiet_start ?? null,
+    quietEnd: pref.quiet_end ?? null,
   };
 }
 
@@ -2536,6 +2592,7 @@ function mapUserBackup(user: ApiUserBackup): BackupUser {
     phone: user.phone ?? undefined,
     location: user.location ?? undefined,
     timezone: user.timezone ?? undefined,
+    profileBio: user.profile_bio,
     notes: user.notes ?? undefined,
     skills: user.skills ?? undefined,
     projects: user.projects ?? undefined,
@@ -2671,6 +2728,7 @@ function toApiUserBackup(user: BackupUser): ApiUserBackup {
     phone: user.phone ?? null,
     location: user.location ?? null,
     timezone: user.timezone ?? null,
+    ...(user.profileBio !== undefined ? { profile_bio: user.profileBio } : {}),
     notes: user.notes ?? null,
     skills: user.skills ?? [],
     projects: user.projects ?? [],
@@ -2859,9 +2917,18 @@ async function resolveDepartmentId(departmentName?: string | null): Promise<stri
 }
 
 const api = {
+  async generateAiContent(request: { model: string; contents: string; config?: Record<string, unknown> }): Promise<{ text: string }> {
+    try { const { data } = await http.post<{ text: string }>('/ai/generate', request, { timeout: 65000 }); return data; }
+    catch (error) { mapAxiosError(error); }
+  },
+  async sendAiMessage(request: { message: string; sessionId?: string; payload?: Record<string, unknown> }, signal?: AbortSignal): Promise<{ reply: string }> {
+    try { const { data } = await http.post<{ reply: string }>('/ai/message', request, { timeout: 65000, signal }); return data; }
+    catch (error) { mapAxiosError(error); }
+  },
   async login(email: string, pass: string): Promise<User> {
     try {
       const { data } = await http.post<AuthResponse>('/auth/login', { email, password: pass });
+      invalidateCache('');
       storeTokens(data.token.access_token, data.token.refresh_token);
       return mapUser(data.user);
     } catch (error) {
@@ -3161,10 +3228,16 @@ const api = {
 
   logout(): void {
     try {
-      void http.post('/auth/logout', {});
+      const token = getAccessToken();
+      void http.post('/auth/logout', {}, token ? { headers: { Authorization: `Bearer ${token}` } } : undefined).catch(() => { /* local logout must still complete */ });
     } catch {
     }
     clearTokens();
+    invalidateCache('');
+    try {
+      clearCredentialHistory(sessionStorage);
+      localStorage.removeItem(LEGACY_CREDENTIAL_HISTORY_KEY);
+    } catch { /* storage may be unavailable */ }
   },
 
   async forgotPassword(email: string): Promise<void> {
@@ -3177,6 +3250,7 @@ const api = {
 
   async getUsers(): Promise<User[]> {
     try {
+      const requestSession = getAccessToken();
       const cacheKey = 'users';
       const cached = getCached<User[]>(cacheKey);
       if (cached && cached.length > 0) {
@@ -3185,7 +3259,8 @@ const api = {
       const { data } = await http.get<ApiUser[]>('/users');
       const mapped = data.map(mapUser);
       if (mapped.length > 0) {
-        setCached(cacheKey, mapped);
+        if (requestSession !== getAccessToken()) throw new Error('Account changed while loading task data');
+      setCached(cacheKey, mapped);
       }
       return mapped;
     } catch (error) {
@@ -3247,6 +3322,8 @@ const api = {
       if (updates.skills !== undefined) body.skills = updates.skills ?? [];
       if (updates.projects !== undefined) body.projects = updates.projects ?? [];
       if (updates.avatarAssetId !== undefined) body.avatar_asset_id = updates.avatarAssetId ?? null;
+      if (updates.profileBio !== undefined) body.profile_bio = updates.profileBio;
+      if (updates.updatedAt !== undefined) body.expected_updated_at = updates.updatedAt;
       if (updates.avatarFrame !== undefined) body.avatar_frame = updates.avatarFrame ?? null;
       if (updates.points !== undefined) body.points = updates.points;
       if (updates.tasksCreated !== undefined) body.tasks_created = updates.tasksCreated;
@@ -3256,14 +3333,14 @@ const api = {
       if (updates.unlockedAchievementIds !== undefined) body.unlocked_achievement_ids = updates.unlockedAchievementIds;
       if (Object.keys(body).length === 0) {
         const { data } = await http.get<ApiUser>(`/users/${userId}`);
-        return mapUser(data);
+        return publishUserProfile(mapUser(data));
       }
       const { data } = await http.patch<ApiUser>(`/users/${userId}`, body);
       if (updates.department !== undefined) {
         departmentCache = null;
       }
       invalidateCache('users');
-      return mapUser(data);
+      return publishUserProfile(mapUser(data));
     } catch (error) {
       mapAxiosError(error);
     }
@@ -3277,7 +3354,7 @@ const api = {
     }
   },
 
-  async updateCurrentUserProfile(userId: string, updates: Partial<Pick<User, 'name' | 'department' | 'employerId' | 'avatarAssetId' | 'avatarFrame'>>): Promise<User> {
+  async updateCurrentUserProfile(userId: string, updates: Partial<Pick<User, 'name' | 'department' | 'employerId' | 'avatarAssetId' | 'avatarFrame' | 'profileBio' | 'phone' | 'location' | 'timezone' | 'skills' | 'updatedAt'>>): Promise<User> {
     try {
       const body: Record<string, unknown> = {};
       if (updates.name !== undefined) body.name = updates.name;
@@ -3287,12 +3364,18 @@ const api = {
       if (updates.avatarAssetId !== undefined) body.avatar_asset_id = updates.avatarAssetId ?? null;
       if (updates.avatarFrame !== undefined) body.avatar_frame = updates.avatarFrame ?? null;
       if (updates.employerId !== undefined) body.employer_id = updates.employerId || null;
+      if (updates.profileBio !== undefined) body.profile_bio = updates.profileBio;
+      if (updates.phone !== undefined) body.phone = updates.phone;
+      if (updates.location !== undefined) body.location = updates.location;
+      if (updates.timezone !== undefined) body.timezone = updates.timezone;
+      if (updates.skills !== undefined) body.skills = updates.skills;
+      if (updates.updatedAt !== undefined) body.expected_updated_at = updates.updatedAt;
       const { data } = await http.patch<ApiUser>('/users/me', body);
       if (updates.department !== undefined) {
         departmentCache = null;
       }
       invalidateCache('users');
-      return mapUser(data);
+      return publishUserProfile(mapUser(data));
     } catch (error) {
       mapAxiosError(error);
     }
@@ -3301,7 +3384,8 @@ const api = {
   async uploadUserAvatar(userId: string, dataUrl: string): Promise<User> {
     try {
       const { data } = await http.post<ApiUser>(`/users/${userId}/avatar`, { data_url: dataUrl });
-      return mapUser(data);
+      invalidateCache('users');
+      return publishUserProfile(mapUser(data));
     } catch (error) {
       mapAxiosError(error);
     }
@@ -3310,10 +3394,37 @@ const api = {
   async uploadCurrentUserAvatar(dataUrl: string): Promise<User> {
     try {
       const { data } = await http.post<ApiUser>('/users/me/avatar', { data_url: dataUrl });
-      return mapUser(data);
+      invalidateCache('users');
+      return publishUserProfile(mapUser(data));
     } catch (error) {
       mapAxiosError(error);
     }
+  },
+
+  async uploadProfileAvatar(file: File, crop: import('../types').AvatarCropMetadata, onProgress: (progress: number) => void): Promise<User> {
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('crop', JSON.stringify(crop));
+      const { data } = await http.post<ApiUser>('/users/me/avatar', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        onUploadProgress: event => onProgress(event.total ? event.loaded / event.total * 100 : 0),
+      });
+      invalidateCache('users');
+      invalidateCache('avatar-assets');
+      return publishUserProfile(mapUser(data));
+    } catch (error) { mapAxiosError(error); }
+  },
+
+  async getAvatarPolicy(): Promise<{ maxBytes: number; contentTypes: string[] }> {
+    const { data } = await http.get('/avatars/policy', { showGlobalProgress: false });
+    return data;
+  },
+
+  async getAvatarImage(path: string): Promise<Blob> {
+    if (!/^\/(?:avatars\/[A-Za-z0-9_-]+\/image|users\/[A-Za-z0-9_-]+\/avatar-image)(?:\?[^#]*)?$/.test(path)) throw new Error('Invalid avatar path');
+    const { data } = await http.get<Blob>(path, { responseType: 'blob', showGlobalProgress: false });
+    return data;
   },
 
   async getAvatarAssets(): Promise<AvatarAsset[]> {
@@ -3406,8 +3517,13 @@ const api = {
     }
   },
 
+  clearTaskViewCache(): void {
+    responseCache.forEach((_value, key) => { if (taskCacheEntry(key) || key === 'users') responseCache.delete(key); });
+  },
+
     async getTasks(_userId: string, _userRole: Role): Promise<Task[]> {
       try {
+      const requestSession = getAccessToken();
       const cacheKey = buildCacheKey('tasks', { userId: _userId, role: _userRole });
       const cached = getCached<Task[]>(cacheKey);
       if (cached) {
@@ -3415,6 +3531,7 @@ const api = {
       }
       const { data } = await http.get<ApiTask[]>('/tasks');
       const mapped = data.map(mapTask);
+      if (requestSession !== getAccessToken()) throw new Error('Account changed while loading task data');
       setCached(cacheKey, mapped);
       return mapped;
     } catch (error) {
@@ -3424,6 +3541,7 @@ const api = {
 
   async getLeaderboardTasks(): Promise<Task[]> {
     try {
+      const requestSession = getAccessToken();
       const cacheKey = 'tasks:leaderboard';
       const cached = getCached<Task[]>(cacheKey);
       if (cached) {
@@ -3431,6 +3549,7 @@ const api = {
       }
       const { data } = await http.get<ApiLeaderboardTask[]>('/tasks/leaderboard');
       const mapped = data.map(mapLeaderboardTask);
+      if (requestSession !== getAccessToken()) throw new Error('Account changed while loading task data');
       setCached(cacheKey, mapped);
       return mapped;
     } catch (error) {
@@ -3439,15 +3558,17 @@ const api = {
   },
 
 
-  async getTask(taskId: string): Promise<Task> {
+  async getTask(taskId: string, fresh = false, includeSubtaskActivity = false): Promise<Task> {
     try {
+      const requestSession = getAccessToken();
       const cacheKey = `task:${taskId}`;
-      const cached = getCached<Task>(cacheKey);
+      const cached = fresh || includeSubtaskActivity ? undefined : getCached<Task>(cacheKey);
       if (cached) {
         return cached;
       }
-      const { data } = await http.get<ApiTask>(`/tasks/${taskId}`);
+      const { data } = await http.get<ApiTask>(`/tasks/${taskId}`, { params:includeSubtaskActivity ? { include_subtask_activity:true } : undefined });
       const mapped = mapTask(data);
+      if (requestSession !== getAccessToken()) throw new Error('Account changed while loading task data');
       setCached(cacheKey, mapped);
       return mapped;
     } catch (error) {
@@ -3457,6 +3578,7 @@ const api = {
 
   async getTaskGroup(taskId: string): Promise<Task[]> {
     try {
+      const requestSession = getAccessToken();
       const cacheKey = `task-group:${taskId}`;
       const cached = getCached<Task[]>(cacheKey);
       if (cached) {
@@ -3464,6 +3586,7 @@ const api = {
       }
       const { data } = await http.get<ApiTask[]>(`/tasks/${taskId}/group`);
       const mapped = (data ?? []).map(mapTask);
+      if (requestSession !== getAccessToken()) throw new Error('Account changed while loading task data');
       setCached(cacheKey, mapped);
       return mapped;
     } catch (error) {
@@ -3480,7 +3603,7 @@ const api = {
         status: taskData.status,
         priority: taskData.priority,
         team: taskData.team,
-        assigned_to_ids: normalizedAssignedTo,
+        assigned_to_ids: normalizedAssignedTo ?? [],
         assigned_to_id: normalizedAssignedTo ? normalizedAssignedTo[0] : null,
         follower_ids: taskData.followerIds ?? [],
         task_group_id: taskData.taskGroupId ?? null,
@@ -3491,7 +3614,7 @@ const api = {
         attachments: taskData.attachments,
         estimated_hours: taskData.estimatedHours,
         tags: taskData.tags,
-        subtasks: taskData.subtasks.map((sub) => ({ title: sub.title, completed: sub.completed })),
+        subtasks: taskData.subtasks.map(subtaskCreateRequest),
       };
       const { data } = await http.post<ApiTask[]>('/tasks', payload);
       invalidateCache('tasks');
@@ -3526,13 +3649,12 @@ const api = {
       if (updates.estimatedHours !== undefined) body.estimated_hours = updates.estimatedHours;
       if (updates.tags !== undefined) body.tags = updates.tags;
       if (updates.subtasks !== undefined) {
-        body.subtasks = updates.subtasks.map((sub) => ({
-          id: sub.id,
-          title: sub.title,
-          completed: sub.completed,
-        }));
+        body.subtasks = updates.subtasks.map((sub) => sub.version !== undefined
+          ? { id:sub.id, title:sub.title, completed:sub.completed, expected_version:sub.version }
+          : subtaskCreateRequest(sub));
       }
       const { data } = await http.patch<ApiTask>(`/tasks/${taskId}`, body);
+      invalidateCache('users');
       invalidateCache('tasks');
       invalidateCache('task:');
       invalidateCache('task-group:');
@@ -3556,12 +3678,11 @@ const api = {
     }
   },
 
-  async updateSubtask(taskId: string, subtaskId: string, updates: Partial<Subtask>): Promise<Task> {
+  async updateSubtask(taskId: string, subtaskId: string, updates: SubtaskChanges): Promise<Task> {
     try {
-      const body: Record<string, unknown> = {};
-      if (updates.title !== undefined) body.title = updates.title;
-      if (updates.completed !== undefined) body.completed = updates.completed;
+      const body = subtaskRequest(updates);
       const { data } = await http.patch<ApiTask>(`/tasks/${taskId}/subtasks/${subtaskId}`, body);
+      invalidateCache('users');
       invalidateCache('tasks');
       invalidateCache('task:');
       invalidateCache('task-group:');
@@ -3570,6 +3691,49 @@ const api = {
     } catch (error) {
       mapAxiosError(error);
     }
+  },
+
+  async getTaskInformation(taskId: string, options: InformationOptions, signal?: AbortSignal): Promise<TaskInformation> {
+    try {
+      const identity = getAccessToken();
+      const { data } = await http.get<TaskInformation>(`/tasks/${encodeURIComponent(taskId)}/information`, {
+        params: options, signal, showGlobalProgress: false,
+      });
+      if (identity !== getAccessToken()) throw new Error('Account changed while loading task information');
+      return data;
+    } catch (error) { mapAxiosError(error); }
+  },
+
+  async getTaskActivity(userId?: string, signal?: AbortSignal): Promise<ActivitySnapshot> {
+    try {
+      const identity = getAccessToken();
+      const { data } = await http.get<ActivitySnapshot>('/tasks/activity', { params: userId ? { user_id: userId } : undefined, signal, showGlobalProgress: false });
+      if (identity !== getAccessToken()) throw new Error('Account changed while loading activity');
+      return data;
+    } catch (error) { mapAxiosError(error); }
+  },
+
+  async changeTaskActivity(taskId: string, command: ActivityCommand): Promise<ActivitySnapshot> {
+    try {
+      const identity = getAccessToken();
+      const { data } = await http.post<ActivitySnapshot>(`/tasks/${taskId}/activity`, command);
+      if (identity !== getAccessToken()) throw new Error('Account changed while changing activity');
+      return data;
+    } catch (error) { mapAxiosError(error); }
+  },
+
+  async getTaskWorkIntervals(taskId: string): Promise<ConfirmedWork[]> {
+    try {
+      const identity = getAccessToken();
+      const { data } = await http.get<ConfirmedWork[]>(`/tasks/${taskId}/work-intervals`);
+      if (identity !== getAccessToken()) throw new Error('Account changed while loading confirmed work');
+      return data;
+    } catch (error) { mapAxiosError(error); }
+  },
+
+  async recordTaskWork(taskId: string, input: WorkInput): Promise<void> {
+    try { await http.post(`/tasks/${taskId}/work-intervals`, input); }
+    catch (error) { mapAxiosError(error); }
   },
 
   async getTickets(filters: TicketListFilters = {}): Promise<Ticket[]> {
@@ -4047,6 +4211,7 @@ const api = {
 
   async getComments(taskId: string): Promise<Comment[]> {
     try {
+      const requestSession = getAccessToken();
       const cacheKey = `comments:${taskId}`;
       const cached = getCached<Comment[]>(cacheKey);
       if (cached) {
@@ -4054,6 +4219,7 @@ const api = {
       }
       const { data } = await http.get<ApiComment[]>(`/comments/task/${taskId}`);
       const mapped = data.map(mapComment);
+      if (requestSession !== getAccessToken()) throw new Error('Account changed while loading task comments');
       setCached(cacheKey, mapped);
       return mapped;
     } catch (error) {
@@ -4220,14 +4386,8 @@ const api = {
 
   async getApiConfig(): Promise<ApiConfig> {
     try {
-      const cacheKey = 'api-config';
-      const cached = getCached<ApiConfig>(cacheKey);
-      if (cached) {
-        return cached;
-      }
       const { data } = await http.get<{ provider: string; api_key?: string | null }>('/config/api');
       const mapped = mapApiConfig(data);
-      setCached(cacheKey, mapped);
       return mapped;
     } catch (error) {
       mapAxiosError(error);
@@ -4297,6 +4457,20 @@ const api = {
     } catch (error) {
       mapAxiosError(error);
     }
+  },
+
+  async getNavigationPolicy(): Promise<import('../types/navigation').NavigationPolicy> {
+    const { data } = await http.get('/navigation', { showGlobalProgress: false });
+    return data;
+  },
+
+  async submitSupport(payload: Record<string, unknown>): Promise<void> {
+    await http.post('/support', payload);
+  },
+
+  async updateNavigationPolicy(version: number, pages: Record<string, import('../types/navigation').NavigationRule>): Promise<import('../types/navigation').NavigationPolicy> {
+    const { data } = await http.put('/navigation', { version, pages });
+    return data;
   },
 
   async updateFeatureFlags(flags: FeatureFlagUpdate[], _currentUserId?: string): Promise<FeatureFlag[]> {
@@ -4434,7 +4608,7 @@ const api = {
 
   async confirmFullReset(otp: string): Promise<string> {
     try {
-      const { data } = await http.post<ApiStatusResponse>('/admin/data/reset/confirm', { otp });
+      const { data } = await http.post<ApiStatusResponse>('/admin/data/reset/confirm', { otp, confirmation: 'RESET WORKSPACE' });
       return data.status;
     } catch (error) {
       mapAxiosError(error);
@@ -5021,6 +5195,7 @@ const api = {
     },
 
     async getTaskCalendarSummary(params: {
+      timezone?: string;
       startDate: string;
       endDate: string;
       search?: string;
@@ -5039,6 +5214,7 @@ const api = {
           start_date: params.startDate,
           end_date: params.endDate,
         };
+        if (params.timezone) query.timezone = params.timezone;
         if (params.search) query.search = params.search;
         if (params.status) query.status = params.status;
         if (params.priority) query.priority = params.priority;
@@ -5059,6 +5235,7 @@ const api = {
     },
 
     async getTaskCalendarTasks(params: {
+      timezone?: string;
       startDate: string;
       endDate?: string;
       search?: string;
@@ -5077,6 +5254,7 @@ const api = {
           start_date: params.startDate,
         };
         if (params.endDate) query.end_date = params.endDate;
+        if (params.timezone) query.timezone = params.timezone;
         if (params.search) query.search = params.search;
         if (params.status) query.status = params.status;
         if (params.priority) query.priority = params.priority;
@@ -5097,6 +5275,7 @@ const api = {
     },
 
     async getTasksKanban(params: {
+      page?: number;
       pageSize?: number;
       search?: string;
       priority?: TaskPriority;
@@ -5110,6 +5289,7 @@ const api = {
     }): Promise<TaskKanbanResponse> {
       try {
         const query: Record<string, unknown> = {};
+        if (params.page) query.page = params.page;
         if (params.pageSize) query.page_size = params.pageSize;
         if (params.search) query.search = params.search;
         if (params.priority) query.priority = params.priority;
@@ -5404,6 +5584,15 @@ const api = {
     }
   },
 
+  async getNotificationInbox() {
+    const { data } = await http.get<{
+      user_id: string; items: ApiNotification[]; unread_count: number;
+      sound_enabled: boolean; push_enabled: boolean; quiet: boolean;
+    }>('/notifications/inbox');
+    return { userId: data.user_id, items: data.items.map(mapNotification), unreadCount: data.unread_count,
+      soundEnabled: data.sound_enabled, pushEnabled: data.push_enabled, quiet: data.quiet };
+  },
+
   async markAllAsRead(userId: string): Promise<void> {
     try {
       await http.post('/notifications/read-all', {});
@@ -5445,15 +5634,17 @@ const api = {
     keys: { p256dh: string; auth: string };
     userAgent?: string;
     deviceLabel?: string;
-  }): Promise<void> {
+  }): Promise<string | null> {
     try {
       const body: ApiPushSubscriptionCreate = {
         endpoint: payload.endpoint,
         keys: payload.keys,
         user_agent: payload.userAgent,
         device_label: payload.deviceLabel,
+        binding_protocol: 'user-v1',
       };
-      await http.post('/push/subscribe', body);
+      const response = await http.post('/push/subscribe', body);
+      return response.headers['x-zea-push-binding'] || null;
     } catch (error) {
       mapAxiosError(error);
     }
@@ -5482,6 +5673,12 @@ const api = {
         preferences: preferences.map((pref) => ({
           module: pref.module,
           push_enabled: pref.pushEnabled,
+          sound_enabled: pref.soundEnabled,
+          near_deadline_hours: pref.nearDeadlineHours,
+          productive_capacity_hours: pref.productiveCapacityHours,
+          overtime_threshold_minutes: pref.overtimeThresholdMinutes,
+          quiet_start: pref.quietStart,
+          quiet_end: pref.quietEnd,
         })),
       };
       const { data } = await http.post<ApiNotificationPreference[]>('/notification/preferences', payload);
@@ -5590,8 +5787,10 @@ const api = {
 
   async assignTaskTemplate(templateId: string, request: TaskTemplateAssignRequest): Promise<Task[]> {
     try {
-      const { data } = await http.post<Task[]>(`/tasks/task-templates/${templateId}/assign`, request);
-      return data;
+      const { data } = await http.post<ApiTask[]>(`/tasks/task-templates/${templateId}/assign`, request);
+      invalidateCache('tasks');
+      invalidateCache('task:');
+      return data.map(mapTask);
     } catch (error) {
       mapAxiosError(error);
     }
@@ -5600,13 +5799,7 @@ const api = {
   // Multiple SMTP Config CRUD
   async getMultipleSmtpConfigs(): Promise<MultipleSmtpConfig[]> {
     try {
-      const cacheKey = 'smtp-multiple';
-      const cached = getCached<MultipleSmtpConfig[]>(cacheKey);
-      if (cached) {
-        return cached;
-      }
       const { data } = await http.get<MultipleSmtpConfig[]>('/config/smtp/multiple');
-      setCached(cacheKey, data);
       return data;
     } catch (error) {
       mapAxiosError(error);
@@ -5686,14 +5879,8 @@ const api = {
   // OAuth Config CRUD
   async getOAuthConfigs(): Promise<OAuthConfig[]> {
     try {
-      const cacheKey = 'oauth-configs';
-      const cached = getCached<OAuthConfig[]>(cacheKey);
-      if (cached) {
-        return cached;
-      }
       const { data } = await http.get<OAuthConfig[]>('/config/oauth');
       const mapped = data ?? [];
-      setCached(cacheKey, mapped);
       return mapped;
     } catch (error) {
       mapAxiosError(error);
@@ -5710,7 +5897,7 @@ const api = {
     }
   },
 
-  async updateOAuthConfig(configId: number, updates: OAuthConfigUpdatePayload): Promise<OAuthConfig> {
+  async updateOAuthConfig(configId: string | number, updates: OAuthConfigUpdatePayload): Promise<OAuthConfig> {
     try {
       const { data } = await http.patch<OAuthConfig>(`/config/oauth/${configId}`, updates);
       invalidateCache('oauth-configs');
@@ -5720,7 +5907,7 @@ const api = {
     }
   },
 
-  async rotateOAuthConfig(configId: number, payload: OAuthCredentialRotatePayload): Promise<OAuthConfig> {
+  async rotateOAuthConfig(configId: string | number, payload: OAuthCredentialRotatePayload): Promise<OAuthConfig> {
     try {
       const { data } = await http.post<OAuthConfig>(`/config/oauth/${configId}/rotate`, payload);
       invalidateCache('oauth-configs');
@@ -5730,7 +5917,7 @@ const api = {
     }
   },
 
-  async deleteOAuthConfig(configId: number): Promise<void> {
+  async deleteOAuthConfig(configId: string | number): Promise<void> {
     try {
       await http.delete(`/config/oauth/${configId}`);
       invalidateCache('oauth-configs');

@@ -147,6 +147,8 @@ def push_if_enabled(
     user_ids: Iterable[str],
     module: Optional[str],
     payload: dict,
+    retry_failures: bool = False,
+    attempt: int = 0,
 ) -> int:
     if not module or module not in MODULES:
         return 0
@@ -165,6 +167,8 @@ def push_if_enabled(
     eligible = [user_id for user_id in recipient_ids if user_id not in disabled]
     if not eligible:
         return 0
+    if retry_failures:
+        return push_service.send_push(db, user_ids=eligible, payload=payload, retry_failures=True, attempt=attempt)
     return push_service.send_push(db, user_ids=eligible, payload=payload)
 
 
@@ -216,3 +220,26 @@ def dispatch_notification(
         },
     )
     return notification
+
+
+def deliver_stored_notification(db: Session, notification: models.Notification, *, sound_enabled: bool) -> None:
+    """Deliver a committed Phase 6 inbox row through the existing integrations.
+
+    Never creates a second inbox record. Caller rechecks access/preferences and
+    owns the delivery transaction; push retries use the original notification ID.
+    """
+    push_if_enabled(db, user_ids=[notification.user_id], module="tasks", retry_failures=True, attempt=notification.delivery_attempts, payload={
+        "title": _resolve_title(notification), "body": _resolve_body(notification),
+        "url": _resolve_url(notification), "module": "tasks",
+        "event_type": notification.alert_kind, "notification_id": notification.id,
+        "silent": not sound_enabled,
+    })
+    payload = schemas.NotificationRead.model_validate(notification).model_dump(mode="json")
+    payload["tenant_id"] = str(notification.tenant_id)
+    trigger_n8n_event("notification.created", payload)
+    audit_logger.log_event(audit_logger.AuditLogInput(
+        action="NOTIFICATION_SENT", category=models.AuditLogCategoryEnum.NOTIFICATION,
+        entity_type="notification", entity_id=notification.id, target_user_id=notification.user_id,
+        source=models.AuditLogSourceEnum.AUTOMATION,
+        metadata={"type": notification.type.value, "alert_kind": notification.alert_kind},
+    ))

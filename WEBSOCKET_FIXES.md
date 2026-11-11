@@ -186,7 +186,7 @@ recipientArray.forEach((memberId) => {
 
 Ensure the following is configured in `.env.local`:
 ```
-VITE_PRESENCE_URL=http://localhost:6212
+VITE_PRESENCE_URL=http://localhost:7212
 ```
 
 Or alternatively, the realtime server must be accessible at the URL where the frontend is deployed.

@@ -1,19 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../hooks/useAuth';
-import { SupportIcon, XMarkIcon } from './icons';
-import { User } from '../types';
+import { SupportIcon } from './icons';
+import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
+import api from '../services/mockApi';
 
 interface SupportFormModalProps {
   isOpen: boolean;
   onClose: () => void;
+  embedded?: boolean;
 }
-
-const WEBHOOK_URL = 'https://n8n.urlfactory.website/webhook/task-support';
 
 const categories = ['Bug', 'Feature Request', 'Access Issue', 'Other'];
 const priorities = ['Low', 'Medium', 'High', 'Critical'];
 
-const SupportFormModal: React.FC<SupportFormModalProps> = ({ isOpen, onClose }) => {
+const SupportFormModal: React.FC<SupportFormModalProps> = ({ isOpen, onClose, embedded = false }) => {
   const { user: currentUser } = useAuth();
 
   const [name, setName] = useState('');
@@ -28,6 +28,10 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (successTimer.current) clearTimeout(successTimer.current); }, []);
+  useUnsavedChanges(isOpen && !success && Boolean(isSubmitting || subject || category || priority || description || selectedFile ||
+    name !== (currentUser?.name ?? '') || email !== (currentUser?.email ?? '') || employerId !== (currentUser?.employerId ?? '')));
 
   useEffect(() => {
     if (isOpen && currentUser) {
@@ -62,6 +66,11 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (file.size > 10 * 1024 * 1024) {
+        setError('Support attachments must be 10 MB or smaller.');
+        e.target.value = '';
+        return;
+      }
       if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
         setError('Only images and PDFs are allowed.');
         e.target.value = '';
@@ -79,6 +88,7 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     if (!email || !subject || !description || !category || !priority) {
       setError('Please fill in all required fields.');
       return;
@@ -102,20 +112,10 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
         ...(currentUser && { user_id: currentUser.id }),
       };
 
-      const response = await fetch(WEBHOOK_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to send request');
-      }
+      await api.submitSupport(payload);
 
       setSuccess('Your support request has been sent successfully.');
-      setTimeout(() => {
+      successTimer.current = setTimeout(() => {
         resetForm();
         onClose();
       }, 2000);
@@ -136,8 +136,8 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-      <div className="relative flex h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-[32px] border border-white/15 bg-gradient-to-br from-slate-950/95 via-slate-900/95 to-slate-950/95 text-white shadow-[0_40px_80px_rgba(15,23,42,0.65)]">
+    <div className={embedded ? 'min-w-0' : 'fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4'}>
+      <div className={`relative flex w-full flex-col overflow-hidden rounded-[32px] border border-white/15 bg-gradient-to-br from-slate-950/95 via-slate-900/95 to-slate-950/95 text-white shadow-[0_40px_80px_rgba(15,23,42,0.65)] ${embedded ? 'min-w-0' : 'h-[90vh] max-w-2xl'}`}>
         <div className="pointer-events-none absolute -right-16 top-0 h-64 w-64 rounded-full bg-primary/25 blur-3xl" />
         <div className="pointer-events-none absolute -left-20 bottom-0 h-60 w-60 rounded-full bg-emerald-500/20 blur-3xl" />
 
@@ -153,7 +153,7 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-3">
+            {!embedded && <div className="flex items-center gap-3">
               <button
                 type="button"
                 onClick={handleClose}
@@ -161,7 +161,7 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
               >
                 Cancel
               </button>
-            </div>
+            </div>}
           </div>
         </header>
 
@@ -274,6 +274,7 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
                 <input
                   type="file"
                   accept="image/*,application/pdf"
+                  aria-label="Support attachment"
                   onChange={handleFileChange}
                   className={`${fieldClass} mt-2 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary/20 file:text-primary hover:file:bg-primary/30`}
                 />
@@ -285,16 +286,17 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
               </div>
             </section>
 
-            {error && <p className="text-sm font-semibold text-rose-300">{error}</p>}
-            {success && <p className="text-sm font-semibold text-emerald-400">{success}</p>}
+            {error && <p role="alert" className="text-sm font-semibold text-rose-300">{error}</p>}
+            {success && <p role="status" className="text-sm font-semibold text-emerald-400">{success}</p>}
 
             <div className="flex items-center justify-end gap-3 pt-2">
               <button
                 type="button"
                 onClick={handleClose}
                 className="rounded-full border border-white/30 bg-black/30 px-5 py-2 text-sm font-semibold text-white transition hover:border-white/60 hover:bg-white/15"
+                disabled={isSubmitting}
               >
-                Cancel
+                {embedded ? 'Reset form' : 'Cancel'}
               </button>
               <button
                 type="submit"

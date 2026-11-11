@@ -1,0 +1,32 @@
+{
+  "scope": "source and sanitized disposable fixtures only",
+  "postgres_focused": {
+    "tests": 27,
+    "passed": 27,
+    "failed": 0,
+    "skipped": 0
+  },
+  "sqlite_focused": {
+    "tests": 27,
+    "passed": 27,
+    "failed": 0,
+    "skipped": 0
+  },
+  "existing_regressions_passed": 141,
+  "frontend_unit_passed": 60,
+  "frontend_build": "PASS",
+  "browser_assertions": 49,
+  "browser_all_passed": true,
+  "typescript": {
+    "status": "FAIL",
+    "baseline": 112,
+    "final": 112,
+    "added": 0,
+    "removed": 0,
+    "normalization": "line/column locations and nondeterministic Omit<User> union-member order"
+  },
+  "whole_backend": "NOT RUN; prior unrelated SQLite collection failures retained",
+  "installed_migration": "NOT RUN; no new migration",
+  "production_deployment": "NOT RUN",
+  "cleanup": "PASS: owned tmpfs PostgreSQL container and scratch Vite listener removed; installed containers retained"
+}

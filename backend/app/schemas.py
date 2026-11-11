@@ -1,12 +1,34 @@
 """Pydantic schemas for request and response bodies."""
 
+<<<<<<< ours
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Literal
+=======
+import json
+from datetime import date, datetime, timezone
+>>>>>>> theirs
 from enum import Enum
+from typing import Any, Dict, List, Literal, Optional
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    PrivateAttr,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from .models import (
+    ApprovalScopeTypeEnum,
+    ApprovalStatusEnum,
+    AuditLogCategoryEnum,
+    AuditLogSeverityEnum,
+    AuditLogSourceEnum,
+    AuditLogStatusEnum,
     AvatarStorageTypeEnum,
     BadgeProgressStatusEnum,
     BadgeStateEnum,
@@ -16,16 +38,6 @@ from .models import (
     MediaCategoryEnum,
     NotificationEntityTypeEnum,
     NotificationTypeEnum,
-    ApprovalScopeTypeEnum,
-    ApprovalStatusEnum,
-    TaskTransferStatusEnum,
-    ToolCategoryStatusEnum,
-    ToolPricingTypeEnum,
-    ToolStatusEnum,
-    AuditLogCategoryEnum,
-    AuditLogSeverityEnum,
-    AuditLogSourceEnum,
-    AuditLogStatusEnum,
     RecurrenceRuleEnum,
     RewardClaimStatusEnum,
     RewardImageSourceEnum,
@@ -33,12 +45,16 @@ from .models import (
     RewardStatusEnum,
     RoleEnum,
     StorageProviderEnum,
-    TaskPriorityEnum,
     TaskApprovalStatusEnum,
+    TaskPriorityEnum,
     TaskStatusEnum,
+    TaskTransferStatusEnum,
+    ToolCategoryStatusEnum,
+    ToolPricingTypeEnum,
+    ToolStatusEnum,
     UserStatusEnum,
 )
-
+from .profile_validation import ProfileFields, validate_profile_write
 
 # ---------------------------------------------------------------------------
 # Levels
@@ -225,15 +241,37 @@ class AvatarAssetCreate(BaseModel):
     data_url: Optional[str] = None
     external_url: Optional[str] = Field(default=None, max_length=500)
 
+    @field_validator("external_url")
+    @classmethod
+    def validate_external_url(cls, value):
+        from .avatar_utils import safe_external_avatar_url
+        if value is not None and not safe_external_avatar_url(value):
+            raise ValueError("Avatar URLs must use HTTP or HTTPS without credentials")
+        return value
+
 
 class AvatarAssetUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=255)
     data_url: Optional[str] = None
     external_url: Optional[str] = Field(default=None, max_length=500)
 
+    validate_external_url = field_validator("external_url")(AvatarAssetCreate.validate_external_url.__func__)
+
 
 class AvatarAssetRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_safe_asset(cls, value):
+        from .avatar_utils import avatar_public_url, safe_external_avatar_url
+        from .models import AvatarAsset
+        if isinstance(value, AvatarAsset):
+            result = {field: getattr(value, field, None) for field in cls.model_fields}
+            result.update(url=avatar_public_url(value), data_url=None,
+                external_url=safe_external_avatar_url(value.external_url))
+            return result
+        return value
 
     id: str
     name: str
@@ -257,7 +295,7 @@ class AvatarUploadPayload(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class UserBase(BaseModel):
+class UserBase(ProfileFields):
     name: str
     email: EmailStr
     employer_id: Optional[str] = None
@@ -282,15 +320,18 @@ class UserBase(BaseModel):
     location: Optional[str] = None
     timezone: Optional[str] = None
     notes: Optional[str] = None
-    skills: Optional[List[str]] = None
     projects: Optional[List[str]] = None
 
 
 class UserCreate(UserBase):
+    validate_profile = model_validator(mode="after")(validate_profile_write)
     password: str = Field(min_length=6)
 
 
-class UserUpdate(BaseModel):
+class UserUpdate(ProfileFields):
+    model_config = ConfigDict(extra="forbid")
+    validate_profile = model_validator(mode="after")(validate_profile_write)
+    expected_updated_at: Optional[datetime] = None
     name: Optional[str] = None
     employer_id: Optional[str] = None
     role: Optional[RoleEnum] = None
@@ -321,7 +362,6 @@ class UserUpdate(BaseModel):
     location: Optional[str] = None
     timezone: Optional[str] = None
     notes: Optional[str] = None
-    skills: Optional[List[str]] = None
     projects: Optional[List[str]] = None
 
 
@@ -330,7 +370,13 @@ class UserPasswordChange(BaseModel):
     new_password: str = Field(min_length=6)
 
 
-class UserProfileUpdate(BaseModel):
+class UserProfileUpdate(ProfileFields):
+    validate_profile = model_validator(mode="after")(validate_profile_write)
+    model_config = ConfigDict(extra="forbid")
+    expected_updated_at: Optional[datetime] = None
+    phone: Optional[str] = Field(default=None, max_length=50)
+    location: Optional[str] = Field(default=None, max_length=255)
+    timezone: Optional[str] = Field(default=None, max_length=64)
     name: Optional[str] = None
     employer_id: Optional[str] = None
     department_id: Optional[str] = None
@@ -353,6 +399,35 @@ class UserResetPassword(BaseModel):
 
 
 class UserRead(UserBase):
+    _include_private_fields: bool = PrivateAttr(default=False)
+    _include_internal_notes: bool = PrivateAttr(default=False)
+
+    @model_serializer(mode="wrap")
+    def serialize_profile(self, handler):
+        result = handler(self)
+        from .avatar_utils import safe_external_avatar_url
+        if self.profile_image_key:
+            result["profile_image_url"] = f"/users/{self.id}/avatar-image?v={self.updated_at.isoformat()}"
+        elif self.profile_image_url and not self.profile_image_url.startswith(("/avatars/", "/users/")):
+            result["profile_image_url"] = safe_external_avatar_url(self.profile_image_url)
+        result.pop("profile_image_key", None)
+        if not self._include_private_fields:
+            for field in ("phone", "location", "timezone", "notes", "manager_email",
+                "shift_name", "shift_start", "shift_end", "morning_break_start", "morning_break_end",
+                "lunch_break_start", "lunch_break_end", "evening_break_start", "evening_break_end"):
+                result.pop(field, None)
+        if not self._include_internal_notes:
+            result.pop("notes", None)
+        return result
+
+    skills: Optional[List[str]] = None
+
+    @field_validator("skills")
+    @classmethod
+    def normalize_skills(cls, value):
+        # Historical profile values remain readable; write schemas validate changes.
+        return value
+
     model_config = ConfigDict(from_attributes=True)
 
     id: str
@@ -384,24 +459,207 @@ class SubtaskBase(BaseModel):
     completed: bool = False
 
 
-class SubtaskInput(SubtaskBase):
-    id: Optional[str] = None
-
-
-class SubtaskUpdate(BaseModel):
-    title: Optional[str] = None
-    completed: Optional[bool] = None
+class SubtaskStatusEnum(str, Enum):
+    TODO = "TODO"
+    IN_PROGRESS = "IN_PROGRESS"
+    PAUSED = "PAUSED"
+    TESTING = "TESTING"
+    COMPLETED = "COMPLETED"
 
 
 class SubtaskRead(SubtaskBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    planned_start_date: Optional[date] = None
+    planned_end_date: Optional[date] = None
+    actual_start_at: Optional[datetime] = None
+    actual_end_at: Optional[datetime] = None
+    priority_override: Optional[TaskPriorityEnum] = None
+    point_policy_version: str = "legacy"
+    version: int = 1
+    created_at: Optional[datetime] = None
+    status: SubtaskStatusEnum = SubtaskStatusEnum.TODO
+    managed: bool = False
+    effective_priority: Optional[TaskPriorityEnum] = None
+    deleted_at: Optional[datetime] = None
+    reward_timezone: Optional[str] = None
+
+
+class _SubtaskDates(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    planned_start_date: Optional[date] = None
+    planned_end_date: Optional[date] = None
+    actual_start_at: Optional[datetime] = None
+    actual_end_at: Optional[datetime] = None
+    priority_override: Optional[TaskPriorityEnum] = None
+
+    @field_validator("actual_start_at", "actual_end_at")
+    @classmethod
+    def utc_timestamp(cls, value):
+        if value is not None:
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise ValueError("An explicit timezone is required")
+            return value.astimezone(timezone.utc)
+        return value
+
+    @model_validator(mode="after")
+    def ordered_ranges(self):
+        if self.planned_start_date and self.planned_end_date and self.planned_end_date < self.planned_start_date:
+            raise ValueError("Planned end precedes start")
+        if self.actual_start_at and self.actual_end_at and self.actual_end_at < self.actual_start_at:
+            raise ValueError("Actual end precedes start")
+        return self
+
+
+class SubtaskScheduleUpdate(_SubtaskDates):
+    expected_version: int = Field(ge=1, strict=True)
+
+
+class SubtaskCreate(_SubtaskDates):
+    title: str = Field(min_length=1, max_length=255)
+    completed: Literal[False] = False
+    planned_start_date: date
+    planned_end_date: date
+
+    @model_validator(mode="after")
+    def new_checklist(self):
+        if not self.title.strip():
+            raise ValueError("A subtask title is required")
+        if self.actual_start_at is not None or self.actual_end_at is not None:
+            raise ValueError("Record and confirm actual times after creating the subtask")
+        return self
+
+
+class SubtaskUpdate(_SubtaskDates):
+    deleted: Optional[bool] = None
+    expected_version: Optional[int] = Field(default=None, ge=1, strict=True)
+    title: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    completed: Optional[bool] = None
+    status: Optional[SubtaskStatusEnum] = None
+    action: Optional[Literal["START", "PAUSE", "RESUME", "SEND_TO_TESTING", "COMPLETE", "REOPEN"]] = None
+    confirm_actual_times: bool = False
+    manage: bool = False
+
+    @model_validator(mode="after")
+    def explicit_edit(self):
+        for name in ("title", "completed", "status", "action", "deleted"):
+            if name in self.model_fields_set and getattr(self, name) is None:
+                raise ValueError(f"{name} cannot be null")
+        if self.title is not None and not self.title.strip():
+            raise ValueError("A subtask title is required")
+        if sum(name in self.model_fields_set for name in ("status", "action", "completed")) > 1:
+            raise ValueError("Choose one status, action or legacy completion flag")
+        if {"actual_start_at", "actual_end_at"} & self.model_fields_set and not self.confirm_actual_times:
+            raise ValueError("Explicitly confirm manually entered actual times")
+        return self
+
+
+class SubtaskInput(SubtaskUpdate):
+    id: Optional[str] = None
+    title: str = Field(min_length=1, max_length=255)
+
+
+class SubtaskRewardPolicyUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
+    expected_version: int = Field(ge=0, strict=True)
+    bonus_enabled: Optional[bool] = None
+    penalty_enabled: Optional[bool] = None
+    refresh_rules: bool = False
+
+
+class TaskActivityInput(BaseModel):
+    """Internal validated snapshots; actor and tenant always come from the server."""
+    model_config = ConfigDict(extra="forbid")
+    event_type: str = Field(min_length=1, max_length=255)
+    before: Optional[Dict[str, Any]] = None
+    after: Optional[Dict[str, Any]] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    correlation_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
+
+    @field_validator("before", "after", "metadata")
+    @classmethod
+    def json_snapshot(cls, value):
+        try:
+            json.dumps(value, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Snapshots must contain finite JSON values") from exc
+        return value
+
+    @field_validator("event_type", "correlation_id")
+    @classmethod
+    def nonblank(cls, value):
+        if value is not None and not value.strip():
+            raise ValueError("A nonblank value is required")
+        return value
+
+
+class PointAdjustmentInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    user_id: str = Field(min_length=1, max_length=36)
+    component_type: Literal["BASE", "BONUS", "PENALTY", "ADJUSTMENT", "REVERSAL"]
+    points: int = Field(strict=True, ge=-2147483648, le=2147483647)
+    policy_version: str = Field(min_length=1, max_length=80)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+    activity_event_id: str = Field(min_length=1, max_length=36)
+    reason: str = Field(min_length=1, max_length=2000)
+    reversal_of_id: Optional[UUID] = None
+    calculation_inputs: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def component_invariants(self):
+        if self.component_type == "BONUS" and self.points < 0 or self.component_type == "PENALTY" and self.points > 0:
+            raise ValueError("Bonus/penalty sign does not match its component")
+        if (self.component_type == "REVERSAL") != (self.reversal_of_id is not None):
+            raise ValueError("Only reversals require a reversal reference")
+        if any(not value.strip() for value in (self.user_id, self.policy_version, self.idempotency_key, self.activity_event_id, self.reason)):
+            raise ValueError("Nonblank ledger values are required")
+        return self
+
+
+class ManualWorkIntervalInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    started_at: datetime
+    ended_at: datetime
+    note: Optional[str] = Field(default=None, max_length=10000)
+    request_id: str = Field(min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def interval_invariants(self):
+        if any(value.tzinfo is None or value.utcoffset() is None for value in (self.started_at, self.ended_at)):
+            raise ValueError("Work timestamps require an explicit timezone")
+        self.started_at = self.started_at.astimezone(timezone.utc)
+        self.ended_at = self.ended_at.astimezone(timezone.utc)
+        if self.ended_at <= self.started_at or not self.request_id.strip():
+            raise ValueError("A positive work interval and nonblank request ID are required")
+        return self
 
 
 # ---------------------------------------------------------------------------
 # Tasks
 # ---------------------------------------------------------------------------
+
+
+class ActivityCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["START", "PAUSE", "RESUME", "STOP"]
+    subtask_id: Optional[str] = Field(default=None, min_length=1, max_length=36)
+    expected_version: int = Field(ge=0, strict=True)
+    request_id: UUID
+
+
+class ConfirmedWorkInput(ManualWorkIntervalInput):
+    confirmed: Literal[True]
+    subtask_id: Optional[str] = Field(default=None, min_length=1, max_length=36)
+    supersedes_id: Optional[str] = Field(default=None, min_length=1, max_length=36)
+
+    @field_validator("confirmed", mode="before")
+    @classmethod
+    def require_confirmation(cls, value):
+        if value is not True:
+            raise ValueError("Explicit confirmation of manual work times is required")
+        return value
 
 
 class TaskBase(BaseModel):
@@ -425,7 +683,7 @@ class TaskCreate(TaskBase):
     assigned_to_ids: List[str] = Field(default_factory=list)
     follower_ids: List[str] = Field(default_factory=list)
     dependencies: List[str] = Field(default_factory=list)
-    subtasks: List[SubtaskInput] = Field(default_factory=list)
+    subtasks: List[SubtaskCreate] = Field(default_factory=list)
 
 
 class TaskUpdate(BaseModel):
@@ -500,6 +758,18 @@ class TaskSummary(BaseModel):
     title: str
 
 
+class SubtaskActivityRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    subtask_id: Optional[str] = None
+    actor_id: str
+    event_type: str
+    before: Optional[Dict[str, Any]] = None
+    after: Optional[Dict[str, Any]] = None
+    created_at: datetime
+
+
 class TaskRead(TaskBase):
     model_config = ConfigDict(from_attributes=True)
 
@@ -517,6 +787,9 @@ class TaskRead(TaskBase):
     assignee: Optional['UserRead'] = None
     creator: Optional['UserRead'] = None
     subtasks: List[SubtaskRead]
+    subtask_activity: List[SubtaskActivityRead] = Field(default_factory=list)
+    subtask_rewards: Optional[Dict[str, Any]] = None
+
     dependencies: List[TaskSummary]
     follower_ids: List[str] = Field(default_factory=list)
     status_title: Optional[str] = None
@@ -1129,6 +1402,7 @@ class DataExportScope(str, Enum):
 
 
 class UserBackup(BaseModel):
+    profile_bio: Optional[str] = Field(default=None, max_length=500)
     id: str
     name: str
     email: EmailStr
@@ -1160,7 +1434,7 @@ class UserBackup(BaseModel):
     clarity_scores: List[int]
     claimed_reward_ids: List[str]
     unlocked_achievement_ids: List[str]
-    hashed_password: str
+    hashed_password: Optional[str] = Field(default=None, exclude=True)
     created_at: datetime
     updated_at: datetime
 
@@ -1272,6 +1546,7 @@ class DataImportPayload(BaseModel):
 
 
 class ResetConfirmPayload(BaseModel):
+    confirmation: str = ""
     otp: str = Field(min_length=4, max_length=10)
 
 
@@ -1572,6 +1847,7 @@ class ChatMemberRead(BaseModel):
     name: str
     email: str
     avatar_url: Optional[str] = None
+    avatar_frame: Optional[str] = None
     title: Optional[str] = None
     department_name: Optional[str] = None
     account_status: UserStatusEnum = UserStatusEnum.ACTIVE
@@ -1625,6 +1901,7 @@ class ChatDirectoryUserRead(BaseModel):
     name: str
     email: str
     avatar_url: Optional[str] = None
+    avatar_frame: Optional[str] = None
     presence: Literal["ONLINE", "AWAY", "OFFLINE"] = "OFFLINE"
     last_seen_at: Optional[datetime] = None
     role_name: Optional[str] = None
@@ -1841,6 +2118,12 @@ class NotificationRead(NotificationBase):
     user_id: str
     is_read: bool
     created_at: datetime
+    alert_kind: Optional[str] = None
+
+    @field_validator("created_at", mode="after")
+    @classmethod
+    def notification_utc(cls, value):
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
 NotificationModule = Literal["tasks", "tickets", "users", "departments", "comments", "chat"]
@@ -1856,6 +2139,7 @@ class PushSubscriptionCreate(BaseModel):
     keys: PushSubscriptionKeys
     user_agent: Optional[str] = None
     device_label: Optional[str] = None
+    binding_protocol: Optional[Literal["user-v1"]] = None
 
 
 class PushSubscriptionDelete(BaseModel):
@@ -1874,11 +2158,23 @@ class NotificationPreferenceRead(BaseModel):
     module: NotificationModule
     push_enabled: bool
     updated_at: Optional[datetime] = None
+    sound_enabled: bool = False
+    near_deadline_hours: int = 24
+    productive_capacity_hours: Optional[float] = None
+    overtime_threshold_minutes: int = 0
+    quiet_start: Optional[str] = None
+    quiet_end: Optional[str] = None
 
 
 class NotificationPreferenceUpdate(BaseModel):
     module: NotificationModule
     push_enabled: bool
+    sound_enabled: Optional[bool] = None
+    near_deadline_hours: Optional[int] = Field(default=None, ge=1, le=8760)
+    productive_capacity_hours: Optional[float] = Field(default=None, gt=0, le=24, allow_inf_nan=False)
+    overtime_threshold_minutes: Optional[int] = Field(default=None, ge=0, le=1440)
+    quiet_start: Optional[str] = Field(default=None, pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    quiet_end: Optional[str] = Field(default=None, pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 
 
 class NotificationPreferenceBatchUpdate(BaseModel):
@@ -2178,6 +2474,11 @@ class OAuthConfigRead(OAuthConfigBase):
     created_at: datetime
     updated_at: datetime
 
+    @field_validator("id", mode="before")
+    @classmethod
+    def serialize_database_id(cls, value):
+        return str(value)
+
 
 # ---------------------------------------------------------------------------
 # Integrations
@@ -2250,6 +2551,14 @@ class TaskTemplateAssignRequest(BaseModel):
     assignment_type: str = Field(..., alias="assignmentType", pattern="^(single|multiple|department)$")
     user_ids: Optional[List[str]] = Field(default=None, alias="userIds")
     department_id: Optional[str] = Field(default=None, alias="departmentId")
+    planned_start_date: Optional[date] = Field(default=None, alias="plannedStartDate")
+    planned_end_date: Optional[date] = Field(default=None, alias="plannedEndDate")
+
+    @model_validator(mode="after")
+    def planned_range(self):
+        if self.planned_start_date and self.planned_end_date and self.planned_start_date > self.planned_end_date:
+            raise ValueError("Planned end precedes start")
+        return self
 
 
 # ---------------------------------------------------------------------------#
@@ -2327,6 +2636,7 @@ class MediaBulkDeleteResponse(BaseModel):
 
 
 class AvatarCropMetadata(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
     x: float = Field(ge=0)
     y: float = Field(ge=0)
     width: float = Field(gt=0)

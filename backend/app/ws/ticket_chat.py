@@ -4,7 +4,7 @@ import asyncio
 import re
 import uuid
 from datetime import datetime
-from typing import Any, Iterable
+from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import select
@@ -13,6 +13,7 @@ from ..database import SessionLocal
 from ..dependencies import _decode_access_token
 from ..events.bus import emit_ticket_event
 from ..models import User, UserStatusEnum
+from ..services.navigation_sockets import bind_socket, socket_allowed
 from ..tickets.models import (
     Ticket,
     TicketComment,
@@ -51,6 +52,10 @@ class TicketConnectionManager:
             recipients = list(self._connections.get(ticket_id, set()))
         for socket in recipients:
             try:
+                if not ticket_socket_allowed(socket, ticket_id):
+                    await socket.close(code=status.WS_1008_POLICY_VIOLATION)
+                    await self.disconnect(ticket_id, socket)
+                    continue
                 await socket.send_json(message)
             except Exception:
                 await self.disconnect(ticket_id, socket)
@@ -83,16 +88,6 @@ def _extract_tenant_id(payload: dict[str, Any]) -> uuid.UUID:
     if not raw_tenant_id:
         raise ValueError("Missing tenant_id")
     return uuid.UUID(str(raw_tenant_id))
-
-
-def _normalize_roles(raw_roles: Any) -> set[str]:
-    if raw_roles is None:
-        return set()
-    if isinstance(raw_roles, str):
-        return {raw_roles.lower()}
-    if isinstance(raw_roles, Iterable):
-        return {str(role).lower() for role in raw_roles}
-    return set()
 
 
 def _user_can_access_ticket(
@@ -136,6 +131,20 @@ def _parse_mentions(body: str) -> list[str]:
     return mentions
 
 
+def ticket_socket_allowed(socket, ticket_id) -> bool:
+    if not socket_allowed(socket, ("tickets",)):
+        return False
+    identity = getattr(socket.state, "navigation_identity", None)
+    if not identity:
+        return False
+    with SessionLocal() as db:
+        user = db.get(User, identity[0])
+        ticket = db.get(Ticket, ticket_id)
+        return bool(user and ticket and ticket.deleted_at is None and str(ticket.tenant_id) == identity[1]
+                    and _user_can_access_ticket(db=db, ticket=ticket, user_id=user.id,
+                                               user_department_id=user.department_id, roles={user.role.value}))
+
+
 def _comment_payload(comment: TicketComment, mention_ids: list[str]) -> dict[str, Any]:
     return {
         "id": str(comment.id),
@@ -160,7 +169,6 @@ async def ticket_chat_ws(websocket: WebSocket, ticket_id: str) -> None:
         payload = _decode_access_token(token)
         user_id = _extract_user_id(payload)
         tenant_id = _extract_tenant_id(payload)
-        roles = _normalize_roles(payload.get("roles"))
         ticket_uuid = uuid.UUID(ticket_id)
     except Exception:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
@@ -169,7 +177,7 @@ async def ticket_chat_ws(websocket: WebSocket, ticket_id: str) -> None:
     db = SessionLocal()
     try:
         user = db.get(User, str(user_id))
-        if not user or user.status != UserStatusEnum.ACTIVE:
+        if not user or user.status != UserStatusEnum.ACTIVE or user.tenant_id != tenant_id or not bind_socket(websocket, user, db, ("tickets",)):
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
 
@@ -191,7 +199,7 @@ async def ticket_chat_ws(websocket: WebSocket, ticket_id: str) -> None:
             ticket=ticket,
             user_id=user_id,
             user_department_id=user.department_id,
-            roles=roles,
+            roles={user.role.value},
         ):
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
@@ -203,6 +211,9 @@ async def ticket_chat_ws(websocket: WebSocket, ticket_id: str) -> None:
     try:
         while True:
             message = await websocket.receive_json()
+            if not ticket_socket_allowed(websocket, ticket_uuid):
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                break
             message_type = message.get("type")
             body = message.get("body") if isinstance(message, dict) else None
 

@@ -1,3 +1,5 @@
+import { getAccessToken } from '../services/tokenStorage';
+import { useTaskFilter, useTaskViewActive } from '../hooks/useTaskView';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -430,6 +432,8 @@ const FilterDropdown: React.FC<{
   activeItemClassName: string;
 }> = ({ value, placeholder, options, onChange, buttonClassName, menuClassName, itemClassName, activeItemClassName }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const active = useTaskViewActive();
+  useEffect(() => { if (!active) setIsOpen(false); }, [active]);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const selectedLabel = options.find((option) => option.value === value)?.label ?? placeholder;
 
@@ -495,6 +499,7 @@ const FilterDropdown: React.FC<{
 };
 
 const KanbanBoard: React.FC = () => {
+  const active = useTaskViewActive();
   const queryClient = useQueryClient();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [columns, setColumns] = useState<KanbanColumn[]>([]);
@@ -502,6 +507,7 @@ const KanbanBoard: React.FC = () => {
   const [departmentOptions, setDepartmentOptions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const { user } = useAuth();
+    const session = `${getAccessToken()}:${user?.role}`;
   const { searchQuery, setSearchQuery, debouncedSearchQuery } = useSearch();
   const { theme } = useTheme();
   const resolvedTheme = useResolvedTheme(theme as ThemeMode);
@@ -520,16 +526,18 @@ const KanbanBoard: React.FC = () => {
   });
 
   // Filtering and sorting state
-  const [statusFilter, setStatusFilter] = useState<string>('');
-  const [priorityFilter, setPriorityFilter] = useState<string>('');
-  const [assigneeFilter, setAssigneeFilter] = useState<string>('');
-  const [teamFilter, setTeamFilter] = useState<string>('');
-  const [dueDateFilter, setDueDateFilter] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useTaskFilter<string>('status', '');
+  const [priorityFilter, setPriorityFilter] = useTaskFilter<string>('priority', '');
+  const [assigneeFilter, setAssigneeFilter] = useTaskFilter<string>('assignee', '');
+  const [teamFilter, setTeamFilter] = useTaskFilter<string>('team', '');
+  const [dueDateFilter, setDueDateFilter] = useTaskFilter<string>('due', '');
   const [isDateRangeOpen, setDateRangeOpen] = useState(false);
+  useEffect(() => { if (!active) setDateRangeOpen(false); }, [active]);
   const [activeDatePreset, setActiveDatePreset] = useState<'7d' | '30d' | 'mtd' | 'ytd' | 'custom' | ''>('');
-  const [quickFilter, setQuickFilter] = useState<string>('');
+  const [quickFilter, setQuickFilter] = useTaskFilter<string>('quick', '');
   const [pageSize, setPageSize] = useState<number>(20);
   const [pageIndex, setPageIndex] = useState<number>(0);
+  useEffect(() => { setPageIndex(0); }, [statusFilter, priorityFilter, assigneeFilter, teamFilter, dueDateFilter, quickFilter, debouncedSearchQuery]);
 
   const dateRangeLabel = useMemo(() => formatRangeLabel(dueDateFilter), [dueDateFilter]);
   const dateRangeTokens = useMemo(() => parseRangeToken(dueDateFilter), [dueDateFilter]);
@@ -569,6 +577,7 @@ const KanbanBoard: React.FC = () => {
   }, []);
 
   const kanbanQueryParams = useMemo(() => ({
+    page: pageIndex + 1,
     pageSize,
     search: debouncedSearchQuery || undefined,
     priority: priorityFilter ? (priorityFilter as TaskPriority) : undefined,
@@ -576,28 +585,28 @@ const KanbanBoard: React.FC = () => {
     team: teamFilter || undefined,
     dueDate: dueDateFilter || undefined,
     quickFilter: quickFilter || undefined,
-  }), [assigneeFilter, debouncedSearchQuery, dueDateFilter, pageSize, priorityFilter, quickFilter, teamFilter]);
+  }), [assigneeFilter, debouncedSearchQuery, dueDateFilter, pageIndex, pageSize, priorityFilter, quickFilter, teamFilter]);
 
   const kanbanQuery = useQuery({
-    queryKey: ['tasks', 'kanban-board', kanbanQueryParams],
+    queryKey: ['tasks', 'kanban-board', session, kanbanQueryParams],
     queryFn: ({ signal }) => api.getTasksKanban({ ...kanbanQueryParams, signal }),
-    enabled: Boolean(user),
+    enabled: Boolean(user) && active,
     staleTime: 45_000,
     placeholderData: keepPreviousData,
   });
 
   const usersQuery = useQuery({
-    queryKey: ['users', 'kanban-board'],
+    queryKey: ['users', 'tasks-module', session],
     queryFn: () => api.getUsers(),
-    enabled: Boolean(user),
+    enabled: Boolean(user) && active,
     staleTime: 60_000,
     placeholderData: keepPreviousData,
   });
 
   const departmentsQuery = useQuery({
-    queryKey: ['departments', 'kanban-board'],
+    queryKey: ['departments', 'tasks-module', session],
     queryFn: () => api.getDepartments(),
-    enabled: Boolean(user),
+    enabled: Boolean(user) && active,
     staleTime: 60_000,
     placeholderData: keepPreviousData,
   });
@@ -687,9 +696,9 @@ const KanbanBoard: React.FC = () => {
     try {
       setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: newStatus } : t)));
       await api.updateTask(taskId, { status: newStatus }, user.id);
-      void queryClient.invalidateQueries({ queryKey: ['tasks', 'kanban-board'] });
     } catch (err) {
       console.error('Failed to update task:', err);
+      setTasks(previous => previous.map(current => current.id === taskId ? task : current));
       fetchData();
     }
   };
@@ -751,7 +760,6 @@ const KanbanBoard: React.FC = () => {
   }, []);
   const handleCloseModal = () => {
     setSelectedTaskId(null);
-    fetchData();
   };
 
   const filteredTasks = useMemo(() => {
@@ -823,15 +831,9 @@ const KanbanBoard: React.FC = () => {
     return filtered;
   }, [tasks, debouncedSearchQuery, usersMap, statusFilter, priorityFilter, assigneeFilter, teamFilter, dueDateFilter, quickFilter, user?.id]);
 
-  const maxTasksInColumn = useMemo(() => {
-    if (!columns.length) return 0;
-    return columns.reduce((max, column) => {
-      const count = filteredTasks.filter(
-        (t) => statusDetails[t.status]?.label === column.title
-      ).length;
-      return Math.max(max, count);
-    }, 0);
-  }, [columns, filteredTasks]);
+  const maxTasksInColumn = Math.max(0, ...(kanbanQuery.data?.columns ?? [])
+    .filter(column => !statusFilter || column.status === statusFilter)
+    .map(column => column.count));
 
   const totalPages = Math.max(1, Math.ceil(maxTasksInColumn / pageSize));
   const canGoPrev = pageIndex > 0;
@@ -1250,17 +1252,18 @@ const KanbanBoard: React.FC = () => {
       >
         {columns.map((column) => {
           const tasksInColumn = filteredTasks.filter(
-            (t) => statusDetails[t.status]?.label === column.title
+            (t) => t.status === column.id
           );
-          const startIndex = pageIndex * pageSize;
-          const visibleTasks = tasksInColumn.slice(startIndex, startIndex + pageSize);
-          const detail = Object.values(statusDetails).find((s) => s.label === column.title);
-          if (!detail) return null;
+          const visibleTasks = tasksInColumn;
+          const detail = statusDetails[column.id as TaskStatus] || statusDetails[TaskStatus.TODO];
+          const label = column.title || detail.label;
           const Icon = detail.icon;
 
           return (
             <div
               key={column.id}
+              role="group"
+              aria-label={`${label} tasks`}
               className="relative w-72 flex-shrink-0 overflow-hidden rounded-3xl border p-5 backdrop-blur transition duration-200 hover:-translate-y-0.5"
               onDrop={(e) => handleDrop(e, column.id as TaskStatus)}
               onDragOver={handleDragOver}
@@ -1284,7 +1287,7 @@ const KanbanBoard: React.FC = () => {
                       <Icon className="h-4 w-4" />
                     </span>
                     <Tooltip text={String(column.id)} triggerClassName="inline-flex items-center">
-                      <span>{detail.label}</span>
+                      <span>{label}</span>
                     </Tooltip>
                   </h3>
                   <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${boardMutedTextClass}`} style={{ borderColor: isBrightMode ? 'rgba(148, 163, 184, 0.22)' : 'rgba(255, 255, 255, 0.1)', background: isBrightMode ? 'rgba(255, 255, 255, 0.58)' : 'rgba(255, 255, 255, 0.06)' }}>
@@ -1381,7 +1384,7 @@ const KanbanBoard: React.FC = () => {
         </div>
       </div>
 
-      {selectedTaskId &&
+      {active && selectedTaskId &&
         typeof window !== 'undefined' &&
         ReactDOM.createPortal(
           <TaskDetailModal

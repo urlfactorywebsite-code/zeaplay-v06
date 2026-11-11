@@ -1,6 +1,7 @@
 """Integration helpers."""
 
 import logging
+import uuid
 from typing import Any, Dict
 
 import httpx
@@ -13,7 +14,7 @@ from . import models
 logger = logging.getLogger(__name__)
 
 
-def trigger_n8n_event(event: str, payload: Dict[str, Any]) -> None:
+def trigger_n8n_event(event: str, payload: Dict[str, Any], *, tenant_id: uuid.UUID | None = None) -> None:
     settings = get_settings()
     if not settings.enable_n8n_forwarding or not settings.n8n_webhook_url:
         audit_logger.log_event(
@@ -24,7 +25,7 @@ def trigger_n8n_event(event: str, payload: Dict[str, Any]) -> None:
                 metadata={"event": event},
             )
         )
-        webhook_service.enqueue_event(event, payload)
+        webhook_service.enqueue_event(event, payload, tenant_id=tenant_id)
         return
 
     try:
@@ -68,4 +69,4 @@ def trigger_n8n_event(event: str, payload: Dict[str, Any]) -> None:
                 metadata={"event": event},
             )
         )
-    webhook_service.enqueue_event(event, payload)
+    webhook_service.enqueue_event(event, payload, tenant_id=tenant_id)

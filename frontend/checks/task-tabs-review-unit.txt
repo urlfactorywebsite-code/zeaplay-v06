@@ -1,0 +1,57 @@
+
+> vee-task-manager@0.0.0 test
+> node --test --import tsx
+
+✔ simultaneous avatar consumers share one authenticated download and object URL (3.3788ms)
+✔ a failed download can be retried and non-image content is rejected (1.405ms)
+✔ login changes revoke previous images and prevent late responses from crossing sessions (0.557ms)
+✔ unused cached images expire, while mounted consumers keep their URL (0.6932ms)
+mockApi.ts: Setting API_BASE_URL
+mockApi.ts: API_BASE_URL set to: https://todoplay.urlfactory.website/api
+✔ normalizes REST snake_case messages before rendering (42.3563ms)
+✔ normalizes websocket camelCase nested sender messages before rendering (1.5347ms)
+✔ renders missing sender, null content, deleted, and attachment-only messages (2.6791ms)
+✔ renders reply previews when original content is missing (2.4575ms)
+✔ message list handles invalid dates without crashing (3.1359ms)
+✔ migrates only credential records owned by the current account (6.1082ms)
+✔ credential histories are isolated by account and malformed input is ignored (0.4602ms)
+✔ logout clears credential histories while preserving unrelated preferences (0.3332ms)
+✔ retired browser provider caches are cleared without resetting preferences (0.2579ms)
+✔ canonical and alternate /settings/api share the same access decision (3.2114ms)
+✔ canonical and alternate /SETTINGS/API/ share the same access decision (0.4806ms)
+✔ canonical and alternate /settings/%61pi share the same access decision (0.132ms)
+✔ canonical and alternate /api/overview share the same access decision (0.1185ms)
+✔ achievement shortcuts and conversation links retain their registry identities (0.2768ms)
+✔ malformed, incomplete and permission-expanding responses fail closed (1.1923ms)
+✔ every Settings tab has one unique, shareable nested route (1.3211ms)
+✔ legacy bookmarks point to canonical Settings routes without loops (1.5245ms)
+✔ every Settings route has one authoritative server definition (3.1232ms)
+✔ migration preserves labels, order and unknown IDs without mutating legacy storage (2.9299ms)
+✔ malformed preferences are ignored and invalid names cannot enter navigation (0.5365ms)
+✔ applying preferences never introduces absent or forbidden pages and never duplicates entries (0.4101ms)
+✔ read-only storage preserves readable legacy names and ordering (0.3364ms)
+✔ four task routes keep /tasks canonical and map every legacy bookmark (13.44ms)
+✔ the protected default task tab owns /tasks route authorization (1.6761ms)
+✔ only the parent/default task pair may share a registry route (1.151ms)
+✔ shared filters preserve unrelated query values and clearing removes only its filter (0.4547ms)
+✔ calendar civil days never shift when local midnight differs from UTC (37.9028ms)
+✔ profile timezone overrides browser grouping and naive deadlines are UTC (8.0505ms)
+✔ calendar scheduling converts wall times and rejects a nonexistent DST time (6.4531ms)
+✔ notification task deep links recognize UUIDs without accepting unknown tab names (0.8766ms)
+✔ Gantt uses civil-day intervals across midnight/DST and retains reversed recorded dates (1.7606ms)
+mockApi.ts: Setting API_BASE_URL
+mockApi.ts: API_BASE_URL set to: https://todoplay.urlfactory.website/api
+✔ task query identity separates accounts/roles and filters while sharing display layouts (1.7174ms)
+✔ adjacent-page prefetch and live consumption share one request and invalidation fetches fresh data (4.3439ms)
+✔ canonical avatar wins over legacy aliases and empty profiles remain supported (2.3547ms)
+✔ initials and color are deterministic for empty, single and multiple names (0.6855ms)
+✔ all existing named frames and role frames remain independently available (0.3273ms)
+✔ empty aliases fall through and executable avatar URLs are ignored (0.418ms)
+ℹ tests 41
+ℹ suites 0
+ℹ pass 41
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3126.7167

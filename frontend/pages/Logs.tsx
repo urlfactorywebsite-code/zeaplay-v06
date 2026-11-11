@@ -306,6 +306,13 @@ const Logs: React.FC = () => {
     return <PageLoader />;
   }
 
+  const clientText = (key: string): string => {
+    const client = selectedLog?.metadata?.client;
+    if (!client || typeof client !== 'object') return '';
+    const value = (client as Record<string, unknown>)[key];
+    return typeof value === 'string' ? value : '';
+  };
+
   return (
     <div className="space-y-6 log-arcade">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -670,13 +677,13 @@ const Logs: React.FC = () => {
                 <p className="text-xs text-white/50">IP: {selectedLog.ipAddress || '-'}</p>
                 <p className="text-xs text-white/50">UA: {selectedLog.userAgent || '-'}</p>
                 <p className="text-xs text-white/50">
-                  Browser: {selectedLog.metadata?.client?.browser ?? '-'}{' '}
-                  {selectedLog.metadata?.client?.browser_version ?? ''}
+                  Browser: {clientText('browser') ?? '-'}{' '}
+                  {clientText('browser_version') || ''}
                 </p>
-                <p className="text-xs text-white/50">OS: {selectedLog.metadata?.client?.os ?? '-'}</p>
-                {selectedLog.metadata?.client?.accept_language && (
+                <p className="text-xs text-white/50">OS: {clientText('os') ?? '-'}</p>
+                {clientText('accept_language') && (
                   <p className="text-xs text-white/50">
-                    Language: {selectedLog.metadata.client.accept_language}
+                    Language: {clientText('accept_language')}
                   </p>
                 )}
               </div>

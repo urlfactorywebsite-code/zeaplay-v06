@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ..services.wallet import adjust as adjust_wallet
+
 import uuid
 from datetime import datetime
 from typing import Iterable, Optional
@@ -166,7 +168,7 @@ def _emit_webhook(
         task=task,
         occurred_at=occurred_at,
     )
-    webhook_service.queue_event(db, event_name=event_name, data=payload)
+    webhook_service.queue_event(db, event_name=event_name, data=payload, tenant_id=ticket.tenant_id)
 
 
 def _ensure_ticket_task_access(
@@ -918,7 +920,7 @@ def complete_ticket_task(
     if task.assigned_to and task.assigned_to != task.created_by:
         assignee = db.get(User, task.assigned_to)
         if assignee:
-            assignee.points = (assignee.points or 0) + task.points
+            adjust_wallet(db, assignee, task.points)
             db.add(
                 PointsLedger(
                     tenant_id=tenant_id,

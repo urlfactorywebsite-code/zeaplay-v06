@@ -1,0 +1,9 @@
+{
+  "backend/app/services/task_information.py": "9287d15b25ee3483b96526b5bd75a70a3c26d9919e46ff83fad7ba8238e1571e",
+  "backend/app/schemas_task_information.py": "1cb9820849955a12b1b54cee0fbdf7ad5b8e7954f3fd323173fb830cd5215c0a",
+  "backend/tests/test_task_information_review.py": "ad3a510f8622bac08b66f23fbcffebfa1c14bbfce5c729f517635da71e4cd9a9",
+  "frontend/components/TaskInformationModal.tsx": "c042a7374bfa3d44ec177d24ca601605b054ed9547fd8a81dfa1cba0f2c82527",
+  "frontend/types/taskInformation.ts": "10e39f3290f3bb79b86abccda4592b71b2d4d144dd4d0e70cbe00758478f86dd",
+  "frontend/utils/taskInformation.ts": "b34c9056d38156de52aba5aa9a909c028d9660f1247072fddc92b3cce1e0a7a5",
+  "frontend/test/task-information.test.ts": "cd64e769d04115a5eed6939a3c024beed0afb932003126c3a1387c13be7fa702"
+}

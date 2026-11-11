@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Optional
+from contextlib import suppress
+from typing import Any
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
+from starlette.concurrency import run_in_threadpool
 
 from ..database import SessionLocal
 from ..dependencies import _decode_access_token
 from ..models import User, UserStatusEnum
+from ..services.navigation_sockets import bind_socket, socket_allowed
+from ..services.task_activity import _subject
+
+TASK_PAGES = ("tasks.list", "kanban", "calendar", "gantt", "dashboard")
 
 
 router = APIRouter()
@@ -33,18 +40,97 @@ class TaskConnectionManager:
             if not connections:
                 self._connections.pop(tenant_id, None)
 
-    async def broadcast(self, tenant_id: Optional[str], message: dict[str, Any]) -> None:
+    async def broadcast(self, tenant_id: str | None, message: dict[str, Any]) -> None:
+        if not tenant_id:
+            return  # A missing scope must never broadcast across every tenant.
+        if message.get("tenant_id") is not None and str(message["tenant_id"]) != str(tenant_id):
+            return
         async with self._lock:
-            if tenant_id:
-                recipients = list(self._connections.get(tenant_id, set()))
-            else:
-                recipients = [socket for sockets in self._connections.values() for socket in sockets]
+            recipients = list(self._connections.get(tenant_id, set()))
+        subject = (
+            message.get("user_id") if message.get("type") in {"work.changed", "notifications.changed"} else None
+        )
+        groups = {}
         for socket in recipients:
-            try:
-                await socket.send_json(message)
-            except Exception:
-                if tenant_id:
-                    await self.disconnect(tenant_id, socket)
+            identity = getattr(socket.state, "navigation_identity", None)
+            if identity and str(identity[1]) != str(tenant_id):
+                continue
+            if message.get("type") == "notifications.changed" and (not subject or not identity or identity[0] != subject):
+                continue
+            if subject and (
+                not identity
+                or subject
+                not in {identity[0], getattr(socket.state, "activity_subject", None)}
+            ):
+                continue
+            groups.setdefault(identity or id(socket), []).append(socket)
+        # Bound slow-client fanout, and check identity once per event/user rather
+        # than once per tab. No cached role/tenant permissions across events.
+        slots = asyncio.Semaphore(16)
+
+        async def deliver(sockets):
+            async with slots:
+                first = sockets[0]
+                permitted = await run_in_threadpool(_delivery_allowed, first, subject)
+                for socket in sockets:
+                    try:
+                        if not permitted:
+                            await asyncio.wait_for(
+                                socket.close(code=status.WS_1008_POLICY_VIOLATION),
+                                timeout=5,
+                            )
+                            await self.disconnect(tenant_id, socket)
+                            continue
+                        await asyncio.wait_for(socket.send_json(message), timeout=5)
+                    except Exception:  # noqa: BLE001 -- isolate broken client transports
+                        await self.disconnect(tenant_id, socket)
+
+        await asyncio.gather(*(deliver(sockets) for sockets in groups.values()))
+
+
+def _delivery_allowed(socket, subject):
+    if not socket_allowed(socket, TASK_PAGES):
+        return False
+    identity = getattr(socket.state, "navigation_identity", None)
+    if subject and identity and subject != identity[0]:
+        return _watch_subject(socket, subject) is not None
+    return True
+
+
+def _watch_subject(socket, subject):
+    identity = getattr(socket.state, "navigation_identity", None)
+    if not identity:
+        return None
+    try:
+        with SessionLocal() as db:
+            user = db.get(User, identity[0])
+            if (
+                not user
+                or user.status != UserStatusEnum.ACTIVE
+                or str(user.tenant_id) != identity[1]
+            ):
+                return None
+            if not bind_socket(socket, user, db, TASK_PAGES):
+                return None
+            return _subject(db, user, subject).id
+    except (HTTPException, SQLAlchemyError):
+        return None
+
+
+def _authenticate_socket(socket, payload):
+    user_id = payload.get("user_id") or payload.get("sub")
+    if not user_id:
+        return None
+    with SessionLocal() as db:
+        user = db.scalar(select(User).where(User.id == str(user_id)))
+        if not user or user.status != UserStatusEnum.ACTIVE:
+            return None
+        tenant_id = str(user.tenant_id)
+        if str(payload.get("tenant_id") or "") != tenant_id or not bind_socket(
+            socket, user, db, TASK_PAGES
+        ):
+            return None
+        return tenant_id
 
 
 manager = TaskConnectionManager()
@@ -67,13 +153,21 @@ async def _heartbeat(websocket: WebSocket, interval_seconds: int = 25) -> None:
         await asyncio.sleep(interval_seconds)
         try:
             await websocket.send_json({"type": "ping"})
-        except Exception:
+        except Exception:  # noqa: BLE001 -- heartbeat must stop on transport failure
             return
 
 
 async def broadcast_task_event(payload: dict[str, Any]) -> None:
     tenant_id = payload.get("tenant_id")
     await manager.broadcast(tenant_id, payload)
+
+
+async def broadcast_task_resync() -> None:
+    """Recover missed invalidations after Redis subscribes; send no task data."""
+    async with manager._lock:
+        tenants = list(manager._connections)
+    for tenant_id in tenants:
+        await manager.broadcast(tenant_id, {"type": "tasks.resync", "tenant_id": tenant_id})
 
 
 @router.websocket("/ws/tasks")
@@ -84,21 +178,14 @@ async def tasks_ws(websocket: WebSocket) -> None:
         return
     try:
         payload = _decode_access_token(token)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- malformed authentication always fails closed
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
-    user_id = payload.get("user_id") or payload.get("sub")
-    if not user_id:
+    tenant_id = await run_in_threadpool(_authenticate_socket, websocket, payload)
+    if not tenant_id:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
-
-    with SessionLocal() as db:
-        user = db.execute(select(User).where(User.id == str(user_id))).scalar_one_or_none()
-        if not user or user.status != UserStatusEnum.ACTIVE:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
-        tenant_id = str(user.tenant_id) if user.tenant_id else "default"
 
     await manager.connect(tenant_id, websocket)
     heartbeat_task = asyncio.create_task(_heartbeat(websocket))
@@ -107,8 +194,28 @@ async def tasks_ws(websocket: WebSocket) -> None:
             message = await websocket.receive_json()
             if message.get("type") == "pong":
                 continue
+            if message.get("type") == "activity.watch":
+                subject = message.get("user_id")
+                if subject is not None and (
+                    not isinstance(subject, str) or len(subject) > 36
+                ):
+                    websocket.state.activity_subject = None
+                    await websocket.send_json({"type": "activity.watch_denied"})
+                    continue
+                subject = await run_in_threadpool(_watch_subject, websocket, subject)
+                websocket.state.activity_subject = subject
+                await websocket.send_json(
+                    {
+                        "type": "activity.watching"
+                        if subject
+                        else "activity.watch_denied",
+                        "user_id": subject,
+                    }
+                )
     except WebSocketDisconnect:
         pass
     finally:
         heartbeat_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await heartbeat_task
         await manager.disconnect(tenant_id, websocket)

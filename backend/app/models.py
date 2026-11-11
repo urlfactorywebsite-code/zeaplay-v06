@@ -4,30 +4,61 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import List, Optional
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     Column,
     Computed,
+    Date,
     DateTime,
-    Enum as SAEnum,
     Float,
     ForeignKey,
     Index,
     Integer,
-    JSON,
     String,
     Table,
     Text,
     UniqueConstraint,
+    event,
+    inspect,
+    text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID, TSVECTOR
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import (
+    Enum as SAEnum,
+)
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
+from sqlalchemy.orm import Mapped, attributes, mapped_column, relationship
+from sqlalchemy.types import TypeDecorator
 
 from .database import Base
+
+
+class UTCDateTime(TypeDecorator):
+    """New workflow timestamps are UTC, including SQLite's naive storage format."""
+
+    impl = DateTime
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        return dialect.type_descriptor(DateTime(timezone=True))
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Workflow timestamps require an explicit timezone")
+        value = value.astimezone(timezone.utc)
+        return value.replace(tzinfo=None) if dialect.name == "sqlite" else value
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +408,7 @@ class User(Base):
     phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     location: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     timezone: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    profile_bio: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     skills: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
     projects: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
@@ -482,6 +514,10 @@ class User(Base):
 class AvatarAsset(Base):
     __tablename__ = "avatar_assets"
 
+    tenant_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    storage_provider: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    thumbnail_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     storage_type: Mapped[AvatarStorageTypeEnum] = mapped_column(
@@ -514,6 +550,10 @@ class AvatarAsset(Base):
 
 class Task(Base):
     __tablename__ = "tasks"
+    __table_args__ = (
+        Index("ix_tasks_assignee_status_updated", "assigned_to_id", "status", "updated_at"),
+        Index("ix_tasks_creator_status", "created_by_id", "status"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -618,6 +658,18 @@ class Task(Base):
 
 class Subtask(Base):
     __tablename__ = "subtasks"
+    __table_args__ = (
+        CheckConstraint("planned_end_date IS NULL OR planned_start_date IS NULL OR planned_end_date >= planned_start_date", name="ck_subtasks_planned_dates"),
+        CheckConstraint("actual_end_at IS NULL OR actual_start_at IS NULL OR actual_end_at >= actual_start_at", name="ck_subtasks_actual_dates"),
+        CheckConstraint("version >= 1", name="ck_subtasks_version"),
+        CheckConstraint("priority_override IS NULL OR priority_override IN ('LOW','MEDIUM','HIGH','URGENT')", name="ck_subtasks_priority_override"),
+        CheckConstraint("length(trim(point_policy_version)) > 0", name="ck_subtasks_policy_version"),
+        Index("ix_subtasks_task_completed", "task_id", "completed"),
+        Index("ix_subtasks_task_policy", "task_id", "point_policy_version"),
+        Index("ix_subtasks_task_workflow_status", "task_id", "workflow_status"),
+        Index("ix_subtasks_reward_order", "task_id", "point_policy_version", "deleted_at", "created_at", "id"),
+        CheckConstraint("workflow_version IN (0,2)", name="ck_subtasks_workflow_version"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
     task_id: Mapped[str] = mapped_column(
@@ -625,8 +677,34 @@ class Subtask(Base):
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     completed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    planned_start_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    planned_end_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    actual_start_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
+    actual_end_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
+    priority_override: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    point_policy_version: Mapped[str] = mapped_column(String(80), default="legacy", server_default="legacy", nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)
+    # Legacy rows have no known creation instant; migrations never invent one.
+    created_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), default=utc_now, nullable=True)
+    # Independent of reward activation: legacy checklist rows stay at version 0.
+    workflow_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    workflow_status: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
+    reward_timezone: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     task: Mapped[Task] = relationship("Task", back_populates="subtasks")
+
+    @property
+    def status(self):
+        return self.workflow_status or ("COMPLETED" if self.completed else "TODO")
+
+    @property
+    def managed(self):
+        return self.workflow_version == 2
+
+    @property
+    def effective_priority(self):
+        return self.priority_override or self.task.priority
 
 
 class Comment(Base):
@@ -941,6 +1019,19 @@ class TaskTransferRequest(Base):
 
 class AuditEvent(Base):
     __tablename__ = "audit_events"
+    __table_args__ = (
+        CheckConstraint("audit_schema_version IN (1, 2)", name="ck_audit_events_schema_version"),
+        Index("ix_audit_events_tenant_task_time", "tenant_id", "task_id", "created_at", "id"),
+        Index("ix_audit_events_tenant_subtask_time", "tenant_id", "subtask_id", "created_at", "id"),
+        Index("ix_audit_events_tenant_correlation", "tenant_id", "correlation_id"),
+        Index("ix_audit_events_tenant_type_time", "tenant_id", "event_type", "created_at", "id"),
+        Index("ix_audit_events_actor_v2", "actor_id", sqlite_where=text("audit_schema_version = 2"), postgresql_where=text("audit_schema_version = 2")),
+        Index("ix_audit_events_task_ref", "task_id"),
+        Index("ix_audit_events_subtask_ref", "subtask_id"),
+        Index("uq_work_activity_request", "tenant_id", "actor_id", "correlation_id", unique=True,
+              sqlite_where=text("event_type IN ('work.started','work.paused','work.resumed','work.stopped','work.switched','work.completed')"),
+              postgresql_where=text("event_type IN ('work.started','work.paused','work.resumed','work.stopped','work.switched','work.completed')")),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
     actor_id: Mapped[Optional[str]] = mapped_column(
@@ -953,8 +1044,108 @@ class AuditEvent(Base):
         JSON().with_variant(JSONB, "postgresql"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    # Version 1 is the untouched legacy log; version 2 is append-only task activity.
+    audit_schema_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)
+    tenant_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    task_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("tasks.id", ondelete="RESTRICT"), nullable=True)
+    subtask_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("subtasks.id", ondelete="RESTRICT"), nullable=True)
+    before: Mapped[Optional[dict]] = mapped_column(JSON().with_variant(JSONB, "postgresql"), nullable=True)
+    after: Mapped[Optional[dict]] = mapped_column(JSON().with_variant(JSONB, "postgresql"), nullable=True)
+    correlation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
     actor: Mapped[Optional[User]] = relationship("User", foreign_keys=[actor_id])
+
+
+class TaskWorkflowSettings(Base):
+    """Server-owned activation marker, separate from global UI feature flags."""
+    __tablename__ = "task_workflow_settings"
+    __table_args__ = (
+        CheckConstraint("version >= 1", name="ck_task_workflow_settings_version"),
+        CheckConstraint("NOT enabled OR (activated_at IS NOT NULL AND point_policy_version <> 'legacy')", name="ck_task_workflow_settings_activation"),
+        CheckConstraint("length(trim(point_policy_version)) > 0", name="ck_task_workflow_settings_policy"),
+        Index("uq_task_workflow_settings_active_tenant", "tenant_id", unique=True,
+              sqlite_where=text("enabled = 1"), postgresql_where=text("enabled")),
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    point_policy_version: Mapped[str] = mapped_column(String(80), primary_key=True, default="legacy", server_default="legacy", nullable=False)
+    activated_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
+    reward_policy_data: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)
+
+
+class TaskWorkInterval(Base):
+    """Actual manually recorded work; independent of status elapsed time."""
+    __tablename__ = "task_work_intervals"
+    __table_args__ = (
+        CheckConstraint("ended_at > started_at", name="ck_task_work_intervals_positive"),
+        Index("ix_task_work_intervals_tenant_task_time", "tenant_id", "task_id", "started_at", "id"),
+        Index("ix_task_work_intervals_tenant_user_time", "tenant_id", "user_id", "started_at", "id"),
+        UniqueConstraint("tenant_id", "request_id", name="uq_task_work_intervals_request"),
+        Index("ix_task_work_intervals_task_ref", "task_id"),
+        Index("ix_task_work_intervals_subtask_ref", "subtask_id"),
+        Index("ix_task_work_intervals_user_ref", "user_id"),
+        Index("ix_task_work_intervals_actor_ref", "created_by_id"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    task_id: Mapped[str] = mapped_column(String(36), ForeignKey("tasks.id", ondelete="RESTRICT"), nullable=False)
+    subtask_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("subtasks.id", ondelete="RESTRICT"), nullable=True)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_by_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    ended_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    activity_event_id: Mapped[str] = mapped_column(String(36), ForeignKey("audit_events.id", ondelete="RESTRICT"), nullable=False)
+    request_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, nullable=False)
+
+
+class TaskActivityContext(Base):
+    """One personal work focus per parent; unrelated to shared workflow status."""
+    __tablename__ = "task_activity_contexts"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "user_id", "task_id", name="uq_activity_user_parent"),
+        UniqueConstraint("tenant_id", "user_id", "slot", name="uq_activity_user_slot"),
+        CheckConstraint("status IN ('RUNNING','PAUSED','STOPPED','COMPLETED')", name="ck_activity_status"),
+        CheckConstraint("elapsed_ms >= 0 AND version >= 1", name="ck_activity_counters"),
+        CheckConstraint("(status='RUNNING' AND slot BETWEEN 1 AND 5 AND slot IS NOT NULL AND resumed_at IS NOT NULL) OR (status<>'RUNNING' AND slot IS NULL AND resumed_at IS NULL)", name="ck_activity_five_slots"),
+        Index("ix_activity_tenant_user_status", "tenant_id", "user_id", "status"),
+        Index("ix_activity_task_subtask", "task_id", "subtask_id"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    task_id: Mapped[str] = mapped_column(String(36), ForeignKey("tasks.id", ondelete="RESTRICT"), nullable=False)
+    subtask_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("subtasks.id", ondelete="RESTRICT"), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    slot: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    elapsed_ms: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    resumed_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    activity_event_id: Mapped[str] = mapped_column(String(36), ForeignKey("audit_events.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=utc_now)
+
+
+class TaskWorkCorrection(Base):
+    """Immutable supersession link; original confirmed intervals are retained."""
+    __tablename__ = "task_work_corrections"
+    __table_args__ = (
+        UniqueConstraint("original_interval_id", name="uq_work_correction_original"),
+        UniqueConstraint("replacement_interval_id", name="uq_work_correction_replacement"),
+        UniqueConstraint("tenant_id", "user_id", "request_id", name="uq_work_correction_request"),
+        CheckConstraint("original_interval_id <> replacement_interval_id", name="ck_work_correction_distinct"),
+        Index("ix_work_corrections_tenant_user", "tenant_id", "user_id"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    original_interval_id: Mapped[str] = mapped_column(String(36), ForeignKey("task_work_intervals.id", ondelete="RESTRICT"), nullable=False)
+    replacement_interval_id: Mapped[str] = mapped_column(String(36), ForeignKey("task_work_intervals.id", ondelete="RESTRICT"), nullable=False)
+    activity_event_id: Mapped[str] = mapped_column(String(36), ForeignKey("audit_events.id", ondelete="RESTRICT"), nullable=False)
+    request_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=utc_now)
 
 
 class AuditLog(Base):
@@ -1139,6 +1330,14 @@ class UserFavoriteTool(Base):
 
 class Notification(Base):
     __tablename__ = "notifications"
+    __table_args__ = (
+        UniqueConstraint("user_id", "dedupe_key", name="uq_notification_recipient_event"),
+        Index("ix_notification_inbox", "user_id", "created_at", "id",
+              postgresql_where=text("dismissed_at IS NULL"), sqlite_where=text("dismissed_at IS NULL")),
+        Index("ix_notification_delivery", "delivery_pending", "next_delivery_at"),
+        Index("ix_notification_pending_chronology", "created_at", "id",
+              postgresql_where=text("delivery_pending IS TRUE"), sqlite_where=text("delivery_pending IS TRUE")),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
     user_id: Mapped[str] = mapped_column(
@@ -1166,18 +1365,31 @@ class Notification(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
+    # Additive Phase 6: legacy notifications keep null ownership/event fields.
+    tenant_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    dedupe_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    alert_kind: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    dismissed_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
+    delivery_pending: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    delivery_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    next_delivery_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
+
     user: Mapped[User] = relationship("User", back_populates="notifications")
     chat: Mapped[Optional["ChatConversation"]] = relationship("ChatConversation", back_populates="notifications")
 
 
 class PushSubscription(Base):
     __tablename__ = "push_subscriptions"
+    __table_args__ = (Index("uq_push_binding_key", "binding_key", unique=True),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
     user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     endpoint: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    # Nullable for existing devices: authenticated re-enrollment binds ownership.
+    tenant_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    binding_key: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     p256dh: Mapped[str] = mapped_column(Text, nullable=False)
     auth: Mapped[str] = mapped_column(Text, nullable=False)
     user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -1191,7 +1403,10 @@ class PushSubscription(Base):
 
 class NotificationPreference(Base):
     __tablename__ = "notification_preferences"
-    __table_args__ = (UniqueConstraint("user_id", "module", name="uq_notification_preferences_user_module"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "module", name="uq_notification_preferences_user_module"),
+        CheckConstraint("near_deadline_hours > 0 AND overtime_threshold_minutes >= 0 AND (productive_capacity_hours IS NULL OR productive_capacity_hours > 0)", name="ck_notification_workload_policy"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
     user_id: Mapped[str] = mapped_column(
@@ -1199,6 +1414,12 @@ class NotificationPreference(Base):
     )
     module: Mapped[str] = mapped_column(String(50), nullable=False)
     push_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    sound_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    near_deadline_hours: Mapped[int] = mapped_column(Integer, default=24, server_default="24", nullable=False)
+    productive_capacity_hours: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    overtime_threshold_minutes: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    quiet_start: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)
+    quiet_end: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
@@ -1410,8 +1631,10 @@ class MessageMention(Base):
 
 class SmtpConfig(Base):
     __tablename__ = "smtp_config"
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True, unique=True)
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     host: Mapped[str] = mapped_column(String(255), nullable=False)
     port: Mapped[int] = mapped_column(Integer, nullable=False)
     username: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -1434,8 +1657,10 @@ class OwnerResetToken(Base):
 
 class ApiConfig(Base):
     __tablename__ = "api_config"
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True, unique=True)
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     provider: Mapped[str] = mapped_column(String(255), nullable=False)
     api_key: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
@@ -1490,6 +1715,8 @@ class MultipleApiConfig(Base):
 
 class MultipleSmtpConfig(Base):
     __tablename__ = "multiple_smtp_configs"
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -1507,9 +1734,12 @@ class MultipleSmtpConfig(Base):
 
 class EmailTemplate(Base):
     __tablename__ = "email_templates"
+    __table_args__ = (UniqueConstraint("tenant_id", "notification_type", name="uq_email_template_tenant_type"),)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
-    notification_type: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    notification_type: Mapped[str] = mapped_column(String(100), nullable=False)
     subject: Mapped[str] = mapped_column(String(255), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
@@ -1520,6 +1750,8 @@ class EmailTemplate(Base):
 
 class OAuthConfig(Base):
     __tablename__ = "oauth_config"
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
@@ -1827,6 +2059,16 @@ class UserProgress(Base):
     season: Mapped[Optional["Season"]] = relationship("Season", back_populates="user_progress")
 
 
+class NavigationPolicy(Base):
+    __tablename__ = "navigation_policies"
+
+    tenant_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    pages: Mapped[dict] = mapped_column(JSON, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_by: Mapped[str] = mapped_column(String(36), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class FeatureFlag(Base):
     __tablename__ = "feature_flags"
 
@@ -1848,5 +2090,152 @@ User.created_levels: Mapped[List["Level"]] = relationship("Level", back_populate
 Level.created_by: Mapped["User"] = relationship("User", back_populates="created_levels")
 Level.user_progress: Mapped[List["UserProgress"]] = relationship("UserProgress", back_populates="level", cascade="all, delete-orphan")
 Reward.level_nodes: Mapped[List["LevelNode"]] = relationship("LevelNode", back_populates="reward")
+
+
+def task_audit_guard_statements_v1(dialect):
+    """Frozen Phase 1 DDL contract. Future changes need a new version/revision.
+
+    Shared by the additive migration and fresh metadata installs; no I/O here.
+    """
+    distinct = "IS DISTINCT FROM" if dialect == "postgresql" else "IS NOT"
+    def same(left, right):
+        return f"NOT ({left} {distinct} {right})"
+    def owner(tenant, task):
+        return f"EXISTS (SELECT 1 FROM tasks t JOIN users u ON u.id=t.created_by_id WHERE t.id={task} AND u.tenant_id={tenant})"
+    def member(tenant, user):
+        return f"EXISTS (SELECT 1 FROM users u WHERE u.id={user} AND u.tenant_id={tenant})"
+    def child(task, subtask):
+        return f"({subtask} IS NULL OR EXISTS (SELECT 1 FROM subtasks s WHERE s.id={subtask} AND s.task_id={task}))"
+    def activity(extra="true"):
+        return "EXISTS (SELECT 1 FROM audit_events e WHERE e.id=NEW.activity_event_id AND e.audit_schema_version=2 AND e.tenant_id=NEW.tenant_id AND e.task_id=NEW.task_id AND " + same("e.subtask_id", "NEW.subtask_id") + f" AND ({extra}))"
+    basic = f"{owner('NEW.tenant_id', 'NEW.task_id')} AND {child('NEW.task_id', 'NEW.subtask_id')}"
+    audit_valid = f"NEW.tenant_id IS NOT NULL AND NEW.task_id IS NOT NULL AND NEW.actor_id IS NOT NULL AND {basic} AND {member('NEW.tenant_id', 'NEW.actor_id')} AND length(trim(NEW.event_type))>0 AND NEW.entity_type=CASE WHEN NEW.subtask_id IS NULL THEN 'task' ELSE 'subtask' END AND NEW.entity_id=COALESCE(NEW.subtask_id, NEW.task_id)"
+    ledger_valid = f"NEW.task_id IS NOT NULL AND {basic} AND {member('NEW.tenant_id', 'NEW.user_id')} AND {activity()} AND NEW.deleted_at IS NULL AND NEW.component_type IN ('BASE','BONUS','PENALTY','ADJUSTMENT','REVERSAL') AND length(trim(NEW.policy_version))>0 AND length(trim(NEW.idempotency_key))>0 AND length(trim(NEW.reason))>0 AND (NEW.component_type<>'BONUS' OR NEW.points>=0) AND (NEW.component_type<>'PENALTY' OR NEW.points<=0) AND (NEW.subtask_id IS NULL OR EXISTS (SELECT 1 FROM subtasks s WHERE s.id=NEW.subtask_id AND s.point_policy_version=NEW.policy_version AND s.point_policy_version<>'legacy')) AND ((NEW.component_type='REVERSAL' AND NEW.reversal_of_id IS NOT NULL AND EXISTS (SELECT 1 FROM xp_ledger x WHERE x.id=NEW.reversal_of_id AND x.record_version=2 AND x.tenant_id=NEW.tenant_id AND x.user_id=NEW.user_id AND x.task_id=NEW.task_id AND {same('x.subtask_id','NEW.subtask_id')} AND x.policy_version=NEW.policy_version AND x.points=-NEW.points)) OR (NEW.component_type<>'REVERSAL' AND NEW.reversal_of_id IS NULL))"
+    if dialect == "sqlite":
+        ledger_valid += " AND typeof(NEW.points)='integer'"
+    ledger_valid += f" AND {activity('e.event_type=NEW.event_type')}"
+    positive_interval = "NEW.ended_at>NEW.started_at" if dialect == "postgresql" else "julianday(NEW.ended_at)>julianday(NEW.started_at)"
+    interval_valid = f"{basic} AND {member('NEW.tenant_id','NEW.user_id')} AND {member('NEW.tenant_id','NEW.created_by_id')} AND {activity('e.actor_id=NEW.created_by_id')} AND {positive_interval} AND length(trim(NEW.request_id))>0"
+    activation_time = "p.activated_at<=clock_timestamp() AND NEW.created_at>=p.activated_at" if dialect == "postgresql" else "julianday(p.activated_at)<=julianday('now') AND julianday(NEW.created_at)>=julianday(p.activated_at)"
+    # Archived activation rows validate historical restores; the opt-in writer
+    # separately selects ONLY the currently enabled policy for new children.
+    policy_valid = f"NEW.point_policy_version='legacy' OR (NEW.created_at IS NOT NULL AND EXISTS (SELECT 1 FROM tasks t JOIN users u ON u.id=t.created_by_id JOIN task_workflow_settings p ON p.tenant_id=u.tenant_id WHERE t.id=NEW.task_id AND p.point_policy_version=NEW.point_policy_version AND {activation_time}))"
+    priority_valid = "NEW.priority_override IS NULL OR NEW.priority_override IN ('LOW','MEDIUM','HIGH','URGENT')"
+    actual_valid = "NEW.actual_end_at>=NEW.actual_start_at" if dialect == "postgresql" else "julianday(NEW.actual_end_at)>=julianday(NEW.actual_start_at)"
+    schedule_valid = f"NEW.version>=1 AND length(trim(NEW.point_policy_version))>0 AND (NEW.planned_start_date IS NULL OR NEW.planned_end_date IS NULL OR NEW.planned_end_date>=NEW.planned_start_date) AND (NEW.actual_start_at IS NULL OR NEW.actual_end_at IS NULL OR {actual_valid})"
+    guards = [
+        ("activity_insert", "audit_events", "INSERT", "true", f"NEW.audit_schema_version NOT IN (1,2) OR (NEW.audit_schema_version=2 AND NOT COALESCE(({audit_valid}), false))"),
+        ("activity_update", "audit_events", "UPDATE", "true", "OLD.audit_schema_version=2 OR NEW.audit_schema_version<>OLD.audit_schema_version"),
+        ("activity_delete", "audit_events", "DELETE", "true", "OLD.audit_schema_version=2"),
+        ("ledger_insert", "xp_ledger", "INSERT", "true", f"NEW.record_version NOT IN (1,2) OR (NEW.record_version=2 AND NOT COALESCE(({ledger_valid}), false))"),
+        ("ledger_update", "xp_ledger", "UPDATE", "true", "OLD.record_version=2 OR NEW.record_version<>OLD.record_version"),
+        ("ledger_delete", "xp_ledger", "DELETE", "true", "OLD.record_version=2"),
+        ("interval_insert", "task_work_intervals", "INSERT", "true", f"NOT COALESCE(({interval_valid}), false)"),
+        ("interval_update", "task_work_intervals", "UPDATE", "true", "true"),
+        ("interval_delete", "task_work_intervals", "DELETE", "true", "true"),
+        ("subtask_insert", "subtasks", "INSERT", "true", f"NOT COALESCE(({policy_valid}), false) OR NOT ({priority_valid}) OR NOT COALESCE(({schedule_valid}), false)"),
+        ("subtask_update", "subtasks", "UPDATE", "true", f"NEW.point_policy_version {distinct} OLD.point_policy_version OR NOT ({priority_valid}) OR NOT COALESCE(({schedule_valid}), false) OR (NEW.task_id {distinct} OLD.task_id AND (OLD.point_policy_version<>'legacy' OR EXISTS (SELECT 1 FROM audit_events e WHERE e.subtask_id=OLD.id AND e.audit_schema_version=2)))"),
+        ("task_owner", "tasks", "UPDATE", f"NEW.created_by_id {distinct} OLD.created_by_id", "EXISTS (SELECT 1 FROM audit_events e JOIN users u ON u.id=NEW.created_by_id WHERE e.task_id=OLD.id AND e.audit_schema_version=2 AND e.tenant_id<>u.tenant_id)"),
+        ("user_tenant", "users", "UPDATE", f"NEW.tenant_id {distinct} OLD.tenant_id", "EXISTS (SELECT 1 FROM audit_events e WHERE e.audit_schema_version=2 AND (e.actor_id=OLD.id OR e.task_id IN (SELECT id FROM tasks WHERE created_by_id=OLD.id))) OR EXISTS (SELECT 1 FROM xp_ledger x WHERE x.record_version=2 AND x.user_id=OLD.id) OR EXISTS (SELECT 1 FROM task_work_intervals w WHERE w.user_id=OLD.id OR w.created_by_id=OLD.id)"),
+        ("task_delete", "tasks", "DELETE", "true", "EXISTS (SELECT 1 FROM audit_events e WHERE e.task_id=OLD.id AND e.audit_schema_version=2) OR EXISTS (SELECT 1 FROM xp_ledger x WHERE x.task_id=OLD.id AND x.record_version=2) OR EXISTS (SELECT 1 FROM task_work_intervals w WHERE w.task_id=OLD.id)"),
+        ("subtask_delete", "subtasks", "DELETE", "true", "EXISTS (SELECT 1 FROM audit_events e WHERE e.subtask_id=OLD.id AND e.audit_schema_version=2) OR EXISTS (SELECT 1 FROM xp_ledger x WHERE x.subtask_id=OLD.id AND x.record_version=2) OR EXISTS (SELECT 1 FROM task_work_intervals w WHERE w.subtask_id=OLD.id)"),
+        ("user_delete", "users", "DELETE", "true", "EXISTS (SELECT 1 FROM audit_events e WHERE e.audit_schema_version=2 AND (e.actor_id=OLD.id OR e.task_id IN (SELECT id FROM tasks WHERE created_by_id=OLD.id))) OR EXISTS (SELECT 1 FROM xp_ledger x WHERE x.record_version=2 AND x.user_id=OLD.id) OR EXISTS (SELECT 1 FROM task_work_intervals w WHERE w.user_id=OLD.id OR w.created_by_id=OLD.id)"),
+        ("policy_update", "task_workflow_settings", "UPDATE", "true", f"NEW.tenant_id {distinct} OLD.tenant_id OR NEW.point_policy_version {distinct} OLD.point_policy_version OR (OLD.activated_at IS NOT NULL AND NEW.activated_at {distinct} OLD.activated_at)"),
+        ("policy_delete", "task_workflow_settings", "DELETE", "true", "EXISTS (SELECT 1 FROM subtasks s JOIN tasks t ON t.id=s.task_id JOIN users u ON u.id=t.created_by_id WHERE u.tenant_id=OLD.tenant_id AND s.point_policy_version=OLD.point_policy_version AND s.point_policy_version<>'legacy')"),
+    ]
+    # Freeze derived ownership while validating a new immutable reference.
+    # Without these locks, a concurrent tenant reassignment could pass its own
+    # history check before the inserting transaction becomes visible.
+    insert_locks = {
+        "activity_insert": ("NEW.audit_schema_version=2", ["NEW.actor_id"]),
+        "ledger_insert": ("NEW.record_version=2", ["NEW.user_id"]),
+        "interval_insert": ("true", ["NEW.user_id", "NEW.created_by_id"]),
+        "subtask_insert": ("NEW.point_policy_version<>'legacy'", []),
+    }
+    statements = []
+    for name, table, operation, condition, invalid in guards:
+        name = "zea_" + name
+        if dialect == "sqlite":
+            statements.append(f"DROP TRIGGER IF EXISTS {name}")
+            statements.append(f"CREATE TRIGGER IF NOT EXISTS {name} BEFORE {operation} ON {table} WHEN {condition} BEGIN SELECT CASE WHEN {invalid} THEN RAISE(ABORT, 'task audit invariant violated') END; END")
+        elif dialect == "postgresql":
+            locks = ""
+            spec = insert_locks.get(name.removeprefix("zea_"))
+            if spec:
+                lock_when, user_ids = spec
+                user_ids = ["(SELECT t.created_by_id FROM tasks t WHERE t.id=NEW.task_id)", *user_ids]
+                locks = f"IF {lock_when} THEN PERFORM 1 FROM tasks WHERE id=NEW.task_id FOR SHARE; "
+                if table != "subtasks":
+                    locks += "PERFORM 1 FROM subtasks WHERE id=NEW.subtask_id FOR SHARE; "
+                locks += f"PERFORM 1 FROM users WHERE id IN ({','.join(user_ids)}) ORDER BY id FOR SHARE; "
+                if table == "subtasks":
+                    locks += "PERFORM 1 FROM task_workflow_settings p WHERE p.point_policy_version=NEW.point_policy_version AND p.tenant_id=(SELECT u.tenant_id FROM users u JOIN tasks t ON t.created_by_id=u.id WHERE t.id=NEW.task_id) FOR SHARE; "
+                locks += "END IF; "
+            statements.append(f"CREATE OR REPLACE FUNCTION {name}_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN {locks}IF ({condition}) AND ({invalid}) THEN RAISE EXCEPTION 'task audit invariant violated' USING ERRCODE='23514'; END IF; RETURN {'OLD' if operation == 'DELETE' else 'NEW'}; END; $$")
+            statements.append(f"DROP TRIGGER IF EXISTS {name} ON {table}")
+            statements.append(f"CREATE TRIGGER {name} BEFORE {operation} ON {table} FOR EACH ROW EXECUTE FUNCTION {name}_guard()")
+        else:
+            raise RuntimeError("Task audit storage supports PostgreSQL and SQLite only")
+    return statements
+
+
+def normalize_workflow_created_at(target, context, *args):
+    """Normalize new history on load without dirtying immutable ORM records.
+
+    Existing writers/readers keep the legacy timestamp contract for version 1.
+    """
+    version = getattr(target, "audit_schema_version", getattr(target, "record_version", 1))
+    value = target.created_at
+    if version == 2 and value is not None:
+        normalized = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+        attributes.set_committed_value(target, "created_at", normalized)
+
+
+event.listen(AuditEvent, "load", normalize_workflow_created_at)
+event.listen(AuditEvent, "refresh", normalize_workflow_created_at)
+
+
+def install_task_audit_guards(connection):
+    inspector = inspect(connection)
+    required = {"tasks", "users", "subtasks", "audit_events", "xp_ledger", "task_workflow_settings", "task_work_intervals"}
+    if not required.issubset(inspector.get_table_names()):
+        return
+    if "audit_schema_version" not in {c["name"] for c in inspector.get_columns("audit_events")}:
+        return
+    for statement in task_audit_guard_statements_v1(connection.dialect.name):
+        connection.execute(text(statement))
+    if "workflow_version" in {c["name"] for c in inspector.get_columns("subtasks")}:
+        from .services.task_audit_schema import task_audit_guard_statements_v2
+        for statement in task_audit_guard_statements_v2(connection.dialect.name):
+            connection.execute(text(statement))
+    if "deleted_at" in {c["name"] for c in inspector.get_columns("subtasks")}:
+        from .services.subtask_reward_schema import statements
+        for statement in statements(connection.dialect.name):
+            connection.execute(text(statement))
+        from .services.subtask_reward_guards_v4 import statements as accounting_statements
+        for statement in accounting_statements(connection.dialect.name):
+            connection.execute(text(statement))
+
+
+@event.listens_for(Base.metadata, "after_create")
+def _task_audit_metadata_guards(metadata, connection, **kwargs):
+    install_task_audit_guards(connection)
+    if {"task_activity_contexts", "task_work_corrections"}.issubset(inspect(connection).get_table_names()):
+        from .services.task_activity_schema import statements
+        for statement in statements(connection.dialect.name):
+            connection.execute(text(statement))
+
+    if "notifications" in inspect(connection).get_table_names():
+        from .services.notification_schema import statements as notification_statements
+        for statement in notification_statements(connection.dialect.name):
+            connection.execute(text(statement))
+
+
+def _install_notification_hooks():
+    from .services.workload_notifications import install_hooks
+    install_hooks()
+
+
+_install_notification_hooks()
 
 

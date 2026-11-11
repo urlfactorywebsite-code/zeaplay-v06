@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
+from ..avatar_utils import user_avatar_url
 from .. import models, schemas
 from ..rate_limit import check_rate_limit
 from ..services import notifications as notification_service
@@ -335,7 +336,8 @@ class DirectoryService:
                     id=directory_user.id,
                     name=directory_user.name,
                     email=directory_user.email,
-                    avatar_url=directory_user.profile_image_url,
+                    avatar_url=user_avatar_url(directory_user),
+                    avatar_frame=directory_user.avatar_frame,
                     presence="OFFLINE",
                     role_name=directory_user.role.value if directory_user.role else None,
                     team_name=directory_user.department.name if directory_user.department else None,

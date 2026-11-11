@@ -1,3 +1,6 @@
+import Avatar from './Avatar';
+import SubtaskEditor from './SubtaskEditor';
+import { plannedDatesError } from '../utils/subtaskWorkflow';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { DayPicker } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
@@ -14,6 +17,8 @@ import TaskPriorityBadge from './ui/TaskPriorityBadge';
 import MultiSelect from './ui/MultiSelect';
 import { StarIcon, PaperClipIcon, TagIcon, TrashIcon } from './icons';
 import SameTaskLogModal from './SameTaskLogModal';
+import TaskInformationModal from './TaskInformationModal';
+import { Info } from 'lucide-react';
 
 type TaskTransferLogEntry = {
     id: string;
@@ -196,6 +201,8 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ taskId, isOpen, initi
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [showTimePicker, setShowTimePicker] = useState(false);
     const [isSameTaskLogModalOpen, setIsSameTaskLogModalOpen] = useState(false);
+    const [isInformationOpen, setIsInformationOpen] = useState(false);
+    useEffect(() => { setIsInformationOpen(false); }, [taskId, isOpen]);
     const [groupTasks, setGroupTasks] = useState<Task[]>([]);
     const [groupLoading, setGroupLoading] = useState(false);
     const [groupError, setGroupError] = useState<string | null>(null);
@@ -392,18 +399,6 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ taskId, isOpen, initi
             handleUpdateTask(updates);
         }, 500); // 500ms debounce
     }, [task, user]);
-    const handleSubtaskToggle = async (subtaskId: string, completed: boolean) => {
-        if (!task) return;
-        try {
-            await api.updateSubtask(task.id, subtaskId, { completed });
-            setTask({
-                ...task,
-                subtasks: task.subtasks.map(sub => sub.id === subtaskId ? { ...sub, completed } : sub)
-            });
-        } catch (err) {
-            console.error('Failed to update subtask');
-        }
-    };
     const handlePostComment = async () => {
         if (!task || !newComment.trim()) return;
         setIsCommenting(true);
@@ -432,7 +427,7 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ taskId, isOpen, initi
             onClose();
             notify('Task deleted.');
         } catch (err) {
-            console.error('Failed to delete task');
+            notify(err instanceof Error ? err.message : 'Failed to delete task');
         }
     };
     const handleAssigneeSelectionChange = async (nextSelection: string[]) => {
@@ -446,6 +441,17 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ taskId, isOpen, initi
         const additions = nextSelection.filter((id) => !currentSet.has(id));
         const removals = currentAssignees.filter((id) => !nextSet.has(id));
         const isGroupMode = groupTasks.length > 1;
+        if (additions.length && task.subtasks.some(sub => plannedDatesError(sub.plannedStartDate, sub.plannedEndDate))) {
+            notify('Enter planned dates for all subtasks before creating copies for additional assignees.');
+            return;
+        }
+        const removeGroupMember = async (id: string) => {
+            const member = groupTasks.find(candidate => candidate.id === id);
+            if (member?.subtasks.some(sub => sub.managed || (sub.version ?? 1) > 1)) {
+                const retained = await api.updateTask(id, { assignedTo:[] }, user?.id || '');
+                if (id === task.id) { setTask(retained); onTaskUpdated?.(retained); }
+            } else await api.deleteTask(id);
+        };
 
         if (additions.length === 0 && removals.length === 0) {
             return;
@@ -540,7 +546,7 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ taskId, isOpen, initi
 
                     if (nextSelection.length === 0) {
                         const deletions = uniqueRemovalIds.filter((id) => id !== task.id);
-                        await Promise.all(deletions.map((id) => api.deleteTask(id)));
+                        await Promise.all(deletions.map(removeGroupMember));
                         const updatedTask = await api.updateTask(task.id, { assignedTo: [] }, user?.id);
                         setTask(updatedTask);
                         onTaskUpdated?.(updatedTask);
@@ -550,8 +556,8 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ taskId, isOpen, initi
                     }
 
                 if (uniqueRemovalIds.length > 0) {
-                    await Promise.all(uniqueRemovalIds.map((id) => api.deleteTask(id)));
-                    if (uniqueRemovalIds.includes(task.id)) {
+                    await Promise.all(uniqueRemovalIds.map(removeGroupMember));
+                    if (uniqueRemovalIds.includes(task.id) && !task.subtasks.some(sub => sub.managed || (sub.version ?? 1) > 1)) {
                         onTaskDeleted?.(task.id);
                         onClose();
                         return;
@@ -569,8 +575,8 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ taskId, isOpen, initi
     };
     const subtaskStats = useMemo(() => {
         if (!task) return { total: 0, completed: 0, progress: 0 };
-        const total = task.subtasks.length;
-        const completed = task.subtasks.filter(sub => sub.completed).length;
+        const total = task.subtasks.filter(sub => !sub.deletedAt).length;
+        const completed = task.subtasks.filter(sub => sub.completed && !sub.deletedAt).length;
         const progress = total > 0 ? Math.round((completed / total) * 100) : 0;
         return { total, completed, progress };
     }, [task]);
@@ -602,6 +608,8 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ taskId, isOpen, initi
                 .map((u) => ({
                     id: u.id,
                     name: u.name,
+                    avatarFrame: u.avatarFrame,
+                    role: u.role,
                     avatarUrl: getUserAvatarUrl(u) ?? undefined,
                     description: `${formatRoleLabel(u.role)}${u.status === UserStatus.ACTIVE ? '' : ' · Inactive'}`,
                 })),
@@ -643,6 +651,8 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ taskId, isOpen, initi
                 .map((candidate) => ({
                     id: candidate.id,
                     name: candidate.name,
+                    avatarFrame: candidate.avatarFrame,
+                    role: candidate.role,
                     avatarUrl: getUserAvatarUrl(candidate) ?? undefined,
                     description: formatRoleLabel(candidate.role),
                 })),
@@ -855,6 +865,7 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ taskId, isOpen, initi
                                             {task.title || 'Untitled Task'}
                                         </h2>
                                     )}
+                                    <button type="button" aria-label="Task information" title="Task information" onClick={() => setIsInformationOpen(true)} className="rounded-full border border-white/20 p-2 text-white hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"><Info className="h-4 w-4" /></button>
                                     {hasGroupPeers && (
                                         <button
                                             type="button"
@@ -957,26 +968,11 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ taskId, isOpen, initi
                                                 style={{ width: `${subtaskStats.progress}%` }}
                                             />
                                         </div>
-                                        <div className="mt-4 space-y-2">
-                                            {task.subtasks.map((sub) => (
-                                                <label
-                                                    key={sub.id}
-                                                    className={`flex items-start gap-3 rounded-2xl border border-white/10 bg-black/30 px-4 py-3 ${sub.completed ? 'opacity-80' : ''}`}
-                                                >
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={sub.completed}
-                                                        onChange={(e) => handleSubtaskToggle(sub.id, e.target.checked)}
-                                                        className="mt-1 h-4 w-4 rounded border-white/30 bg-black/20 text-emerald-400 focus:ring-emerald-300"
-                                                    />
-                                                    <span className="text-sm text-white/80">{sub.title}</span>
-                                                </label>
-                                            ))}
-                                        </div>
                                     </>
                                 ) : (
                                     <p className="mt-2 text-sm text-white/70">No subtasks for this quest yet.</p>
                                 )}
+                                <SubtaskEditor key={`${task.id}:${user?.id}`} task={task} user={user} onUpdated={updated => { setTask(updated); onTaskUpdated?.(updated); }} />
                             </section>
 
                             <section className="mt-6 rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur">
@@ -1040,7 +1036,8 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ taskId, isOpen, initi
                                             return (
                                                 <div key={comment.id} className="rounded-2xl border border-white/5 bg-black/30 p-4">
                                                     <div className="flex items-center justify-between text-xs text-white/70">
-                                                        <span className="font-semibold text-white">
+                                                        <span className="inline-flex items-center gap-2 font-semibold text-white">
+                                                            <Avatar user={author} className="h-7 w-7" />
                                                             {author?.name || 'Unknown operative'}
                                                         </span>
                                                         <span>{timeAgo(comment.createdAt)}</span>
@@ -1504,15 +1501,10 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ taskId, isOpen, initi
                                         <span className="text-xs text-white/70">No assignees yet</span>
                                     ) : (
                                         assignedUsers.map((member) => {
-                                            const memberAvatar = getUserAvatarUrl(member);
                                             return (
                                                 <div key={member.id} className="flex items-center gap-2 rounded-full bg-black/40 px-3 py-1 text-xs font-medium text-white shadow-sm">
                                                     <span className="h-7 w-7 overflow-hidden rounded-full border border-white/20">
-                                                        {memberAvatar ? (
-                                                            <img src={memberAvatar} alt={member.name} className="h-full w-full object-cover" />
-                                                        ) : (
-                                                            <span className="flex h-full w-full items-center justify-center text-[10px] uppercase">{member.name.slice(0, 2)}</span>
-                                                        )}
+                                                        <Avatar user={member} className="h-full w-full" />
                                                     </span>
                                                     <span>{member.name}</span>
                                                     <span className="text-[10px] uppercase tracking-[0.2em] text-white/50">{formatRoleLabel(member.role)}</span>
@@ -1533,6 +1525,10 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ taskId, isOpen, initi
                                         <span className="font-semibold text-white">{task.estimatedHours} hours</span>
                                     </div>
                                 )}
+                                <div className="flex items-center justify-between">
+                                    <span>Task information</span>
+                                    <button type="button" onClick={() => setIsInformationOpen(true)} className="font-semibold text-primary hover:text-primary/80">View information</button>
+                                </div>
                                 <div className="flex items-center justify-between">
                                     <span>Created</span>
                                     <span className="text-right font-semibold text-white">
@@ -1571,6 +1567,7 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ taskId, isOpen, initi
                     </div>
                 )}
             </div>
+            <TaskInformationModal taskId={taskId} isOpen={isOpen && isInformationOpen} onClose={() => setIsInformationOpen(false)} />
             <SameTaskLogModal
                 isOpen={isSameTaskLogModalOpen}
                 onClose={() => setIsSameTaskLogModalOpen(false)}

@@ -27,13 +27,13 @@ Create a `.env` file in `backend/` when you need to override defaults. Available
 | `VEE_REFRESH_TOKEN_EXPIRE_MINUTES` | `10080` | Refresh token lifetime. |
 | `VEE_ENABLE_N8N_FORWARDING` | `False` | When `True`, outbound events are sent to n8n. |
 | `VEE_N8N_WEBHOOK_URL` | _unset_ | n8n webhook endpoint to receive events. |
-| `VEE_CORS_ALLOW_ORIGINS` | `["http://localhost:5173"]` | Comma-separated list of allowed origins. |
+| `VEE_CORS_ALLOW_ORIGINS` | `["http://localhost:7300", ...]` | Comma-separated list of allowed origins. |
 
 ## Running the API
 ```bash
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --port 7211
 ```
-The API will be available at `http://127.0.0.1:8000`. Automatic docs are served at `http://127.0.0.1:8000/docs`.
+The API will be available at `http://127.0.0.1:7211`. Automatic docs are served at `http://127.0.0.1:7211/docs`.
 
 A quick health check is available at `GET /health`.
 
@@ -54,7 +54,7 @@ _All seed accounts share the temporary password `password123`. Update their pass
 
 Example request to send a custom event:
 ```bash
-curl -X POST http://127.0.0.1:8000/integrations/n8n/trigger \
+curl -X POST http://127.0.0.1:7211/integrations/n8n/trigger \
   -H "Authorization: Bearer <access_token>" \
   -H "Content-Type: application/json" \
   -d '{"event":"custom.sync","payload":{"foo":"bar"}}'

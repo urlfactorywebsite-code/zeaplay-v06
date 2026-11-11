@@ -1,3 +1,7 @@
+import Avatar from '../components/Avatar';
+import BackupManager from '../components/BackupManager';
+import EmployeeIdentityCard from '../components/EmployeeIdentityCard';
+import SkillsEditor from '../components/SkillsEditor';
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -8,7 +12,6 @@ import {
   Task,
   TaskStatus,
   DataExportScope,
-  DataImportPayload,
   CUSTOM_STATUS_NAMES,
   TaskTransferPayload,
 } from '../types';
@@ -35,12 +38,9 @@ import UserStatusBadge from '../components/ui/UserStatusBadge';
 import OrganizationTreeSection from '../components/OrganizationTreeSection';
 import { augmentTasksWithPoints, calculateUserPointsFromTasks } from '../utils/taskPoints';
 import { loadPointsConfig, POINTS_CONFIG_UPDATED_EVENT } from '../utils/pointsConfigStorage';
-import { APP_REFRESH_EVENT } from '../utils/appEvents';
-import { getUserAvatarUrl } from '../utils/userAvatar';
+import { APP_REFRESH_EVENT, USER_PROFILE_UPDATED_EVENT } from '../utils/appEvents';
 
 const XP_PER_LEVEL = 750;
-const PROFILE_STORAGE_KEY = 'org-user-profiles-v1';
-const MANAGER_STORAGE_KEY = 'org-user-managers-v1';
 
 type UserProfile = {
   title?: string;
@@ -76,18 +76,22 @@ const Users: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [exportLoading, setExportLoading] = useState(false);
-  const [importLoading, setImportLoading] = useState(false);
-  const [importReport, setImportReport] = useState<{
-    title: string;
-    added: string[];
-    existing: string[];
-    scope: 'users' | 'departments';
-  } | null>(null);
+  const [backupImport, setBackupImport] = useState<{ file: File; dataset: 'users' | 'departments' } | null>(null);
   const { user: currentUser } = useAuth();
   const { debouncedSearchQuery } = useSearch();
   const { onlineUserIds, status: presenceStatus } = usePresence();
   const [activeSection, setActiveSection] = useState<'list' | 'org' | 'deactivated'>('list');
-  const canEditContacts = currentUser?.role === Role.OWNER;
+  const canEditContacts = currentUser?.role === Role.OWNER || currentUser?.role === Role.ADMIN;
+
+  useEffect(() => {
+    const updated = (event: Event) => {
+      const profile = (event as CustomEvent<User>).detail;
+      setUsers(previous => previous.map(person => person.id === profile.id ? profile : person));
+      setContactUser(previous => previous?.id === profile.id ? profile : previous);
+    };
+    window.addEventListener(USER_PROFILE_UPDATED_EVENT, updated);
+    return () => window.removeEventListener(USER_PROFILE_UPDATED_EVENT, updated);
+  }, []);
 
   // Filter states
   const [employerIdFilter, setEmployerIdFilter] = useState('');
@@ -134,18 +138,17 @@ const Users: React.FC = () => {
     lunchBreakEnd: '',
     eveningBreakStart: '',
     eveningBreakEnd: '',
+    profileBio: '',
     title: '',
     phone: '',
     location: '',
     timezone: '',
     notes: '',
-    skills: '',
+    skills: [] as string[],
     projects: '',
   });
   const [contactError, setContactError] = useState<string | null>(null);
   const [contactLoading, setContactLoading] = useState(false);
-  const [profileMap, setProfileMap] = useState<Record<string, UserProfile>>({});
-  const [managerMap, setManagerMap] = useState<Record<string, string | null>>({});
   const [nameFilter, setNameFilter] = useState('');
 
   // Menu
@@ -177,79 +180,6 @@ const Users: React.FC = () => {
       lines.push(headers.map((key) => csvEscape(row[key])).join(','));
     });
     return lines.join('\n');
-  };
-
-  const parseCsv = (text: string) => {
-    const rows: string[][] = [];
-    let row: string[] = [];
-    let field = '';
-    let inQuotes = false;
-
-    for (let i = 0; i < text.length; i += 1) {
-      const char = text[i];
-      if (inQuotes) {
-        if (char === '"') {
-          if (text[i + 1] === '"') {
-            field += '"';
-            i += 1;
-          } else {
-            inQuotes = false;
-          }
-        } else {
-          field += char;
-        }
-      } else if (char === '"') {
-        inQuotes = true;
-      } else if (char === ',') {
-        row.push(field);
-        field = '';
-      } else if (char === '\n') {
-        row.push(field);
-        rows.push(row);
-        row = [];
-        field = '';
-      } else if (char !== '\r') {
-        field += char;
-      }
-    }
-
-    if (field.length > 0 || row.length > 0) {
-      row.push(field);
-      rows.push(row);
-    }
-
-    const headers = rows.shift() ?? [];
-    return rows.map((values) => {
-      const record: Record<string, string> = {};
-      headers.forEach((header, index) => {
-        record[header] = values[index] ?? '';
-      });
-      return record;
-    });
-  };
-
-  const parseJsonArray = <T,>(value: string): T[] => {
-    if (!value) {
-      return [];
-    }
-    try {
-      const parsed = JSON.parse(value);
-      return Array.isArray(parsed) ? (parsed as T[]) : [];
-    } catch {
-      return [];
-    }
-  };
-
-  const parseNumber = (value: string, fallback = 0) => {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : fallback;
-  };
-
-  const parseNullableString = (value: string) => {
-    if (!value || value.toLowerCase() === 'null') {
-      return null;
-    }
-    return value;
   };
 
   const allTaskStatuses = useMemo(() => Object.values(TaskStatus) as TaskStatus[], []);
@@ -329,92 +259,6 @@ const Users: React.FC = () => {
     if (typeof window === 'undefined') {
       return;
     }
-    try {
-      const storedProfiles = window.localStorage.getItem(PROFILE_STORAGE_KEY);
-      if (storedProfiles) {
-        setProfileMap(JSON.parse(storedProfiles));
-      }
-    } catch (error) {
-      console.warn('Failed to load user profiles', error);
-    }
-    try {
-      const storedManagers = window.localStorage.getItem(MANAGER_STORAGE_KEY);
-      if (storedManagers) {
-        setManagerMap(JSON.parse(storedManagers));
-      }
-    } catch (error) {
-      console.warn('Failed to load manager map', error);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-    try {
-      window.localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profileMap));
-    } catch (error) {
-      console.warn('Failed to persist user profiles', error);
-    }
-  }, [profileMap]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-    try {
-      window.localStorage.setItem(MANAGER_STORAGE_KEY, JSON.stringify(managerMap));
-    } catch (error) {
-      console.warn('Failed to persist manager map', error);
-    }
-  }, [managerMap]);
-
-  useEffect(() => {
-    const userIds = new Set(users.map((user) => user.id));
-    setManagerMap((prev) => {
-      const next: Record<string, string | null> = {};
-      users.forEach((user) => {
-        const managerId = user.managerId ?? prev[user.id] ?? null;
-        next[user.id] = managerId && userIds.has(managerId) ? managerId : null;
-      });
-      return next;
-    });
-    setProfileMap((prev) => {
-      const next: Record<string, UserProfile> = {};
-      users.forEach((user) => {
-        const profileFromUser: UserProfile = {
-          title: user.title ?? undefined,
-          phone: user.phone ?? undefined,
-          location: user.location ?? undefined,
-          timezone: user.timezone ?? undefined,
-          managerEmail: user.managerEmail ?? undefined,
-          shiftName: user.shiftName ?? undefined,
-          shiftStart: user.shiftStart ?? undefined,
-          shiftEnd: user.shiftEnd ?? undefined,
-          morningBreakStart: user.morningBreakStart ?? undefined,
-          morningBreakEnd: user.morningBreakEnd ?? undefined,
-          lunchBreakStart: user.lunchBreakStart ?? undefined,
-          lunchBreakEnd: user.lunchBreakEnd ?? undefined,
-          eveningBreakStart: user.eveningBreakStart ?? undefined,
-          eveningBreakEnd: user.eveningBreakEnd ?? undefined,
-          notes: user.notes ?? undefined,
-          skills: user.skills ?? undefined,
-          projects: user.projects ?? undefined,
-        };
-        const existing = prev[user.id] ?? {};
-        const merged = { ...existing, ...profileFromUser };
-        if (Object.values(merged).some((value) => value !== undefined && value !== '')) {
-          next[user.id] = merged;
-        }
-      });
-      return next;
-    });
-  }, [users]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
 
     const handlePointsConfigChange = () => {
       setTasks((previous) => augmentTasksWithPoints(previous, { config: loadPointsConfig() }));
@@ -430,7 +274,7 @@ const Users: React.FC = () => {
     if (!contactUser) {
       return;
     }
-    const profile = profileMap[contactUser.id] ?? {};
+    const profile = contactUser;
     const profileFromUser: UserProfile = {
       title: contactUser.title ?? undefined,
       phone: contactUser.phone ?? undefined,
@@ -456,7 +300,7 @@ const Users: React.FC = () => {
       employerId: contactUser.employerId ?? '',
       department: contactUser.department ?? '',
       role: contactUser.role,
-      managerId: contactUser.managerId ?? managerMap[contactUser.id] ?? '',
+      managerId: contactUser.managerId ?? '',
       managerEmail: mergedProfile.managerEmail ?? '',
       shiftName: mergedProfile.shiftName ?? '',
       shiftStart: mergedProfile.shiftStart ?? '',
@@ -467,16 +311,17 @@ const Users: React.FC = () => {
       lunchBreakEnd: mergedProfile.lunchBreakEnd ?? '',
       eveningBreakStart: mergedProfile.eveningBreakStart ?? '',
       eveningBreakEnd: mergedProfile.eveningBreakEnd ?? '',
+      profileBio: contactUser.profileBio ?? '',
       title: mergedProfile.title ?? '',
       phone: mergedProfile.phone ?? '',
       location: mergedProfile.location ?? '',
       timezone: mergedProfile.timezone ?? '',
       notes: mergedProfile.notes ?? '',
-      skills: tagListToString(mergedProfile.skills),
+      skills: mergedProfile.skills ?? [],
       projects: tagListToString(mergedProfile.projects),
     });
     setContactError(null);
-  }, [contactUser, managerMap, profileMap]);
+  }, [contactUser]);
 
   const handleUserCreated = (newDepartments?: Department[]) => {
     fetchData();
@@ -745,7 +590,7 @@ const Users: React.FC = () => {
       eveningBreakStart: contactForm.eveningBreakStart.trim() || undefined,
       eveningBreakEnd: contactForm.eveningBreakEnd.trim() || undefined,
       notes: contactForm.notes.trim() || undefined,
-      skills: parseTagInput(contactForm.skills),
+      skills: contactForm.skills,
       projects: parseTagInput(contactForm.projects),
     };
 
@@ -766,6 +611,8 @@ const Users: React.FC = () => {
       phone: contactForm.phone.trim(),
       location: contactForm.location.trim(),
       timezone: contactForm.timezone.trim(),
+      profileBio: contactForm.profileBio,
+      updatedAt: contactUser.updatedAt,
       notes: contactForm.notes.trim(),
       skills: profileUpdate.skills,
       projects: profileUpdate.projects,
@@ -776,8 +623,6 @@ const Users: React.FC = () => {
     try {
       const updatedUser = await api.updateUser(contactUser.id, updatePayload, currentUser.id);
       setUsers((prev) => prev.map((user) => (user.id === updatedUser.id ? updatedUser : user)));
-      setProfileMap((prev) => ({ ...prev, [contactUser.id]: profileUpdate }));
-      setManagerMap((prev) => ({ ...prev, [contactUser.id]: contactForm.managerId || null }));
       setContactUser(updatedUser);
       setContactEditing(false);
     } catch (error) {
@@ -790,7 +635,7 @@ const Users: React.FC = () => {
 
   const handleDeleteContactUser = async () => {
     if (!contactUser || !currentUser) return;
-    if (!canEditContacts) {
+    if (currentUser.role !== Role.OWNER) {
       setContactError('Only the owner can delete users.');
       return;
     }
@@ -802,19 +647,6 @@ const Users: React.FC = () => {
     try {
       await api.deleteUser(contactUser.id, currentUser.id);
       setUsers((prev) => prev.filter((user) => user.id !== contactUser.id));
-      setProfileMap((prev) => {
-        const next = { ...prev };
-        delete next[contactUser.id];
-        return next;
-      });
-      setManagerMap((prev) => {
-        const next: Record<string, string | null> = {};
-        Object.entries(prev).forEach(([userId, managerId]) => {
-          if (userId === contactUser.id) return;
-          next[userId] = managerId === contactUser.id ? null : managerId;
-        });
-        return next;
-      });
       closeContactModal();
     } catch (error) {
       console.error('Failed to delete user', error);
@@ -849,7 +681,6 @@ const Users: React.FC = () => {
       clarityScores: JSON.stringify(user.clarityScores ?? []),
       claimedRewardIds: JSON.stringify(user.claimedRewardIds ?? []),
       unlockedAchievementIds: JSON.stringify(user.unlockedAchievementIds ?? []),
-      hashedPassword: user.hashedPassword,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     }));
@@ -900,192 +731,10 @@ const Users: React.FC = () => {
     }
   };
 
-  const buildUserImportPayload = (records: Array<Record<string, string>>): DataImportPayload => {
-    const now = new Date().toISOString();
-    const usersPayload = records
-      .filter((record) => record.id && record.email)
-      .map((record) => ({
-        id: record.id,
-        name: record.name,
-        email: record.email,
-        role: record.role as DataImportPayload['users'][number]['role'],
-        status: record.status as DataImportPayload['users'][number]['status'],
-        departmentId: parseNullableString(record.departmentId) ?? null,
-        points: parseNumber(record.points),
-        tasksCreated: parseNumber(record.tasksCreated),
-        tasksCompleted: parseNumber(record.tasksCompleted),
-        clarityScores: parseJsonArray<number>(record.clarityScores),
-        claimedRewardIds: parseJsonArray<string>(record.claimedRewardIds),
-        unlockedAchievementIds: parseJsonArray<string>(record.unlockedAchievementIds),
-        hashedPassword: record.hashedPassword || '',
-        createdAt: record.createdAt || now,
-        updatedAt: record.updatedAt || now,
-      }));
-
-    return {
-      scope: DataExportScope.USERS,
-      departments: departments.map((department) => ({ id: department.id, name: department.name })),
-      users: usersPayload,
-      tasks: [],
-      achievements: [],
-      rewards: [],
-      kanbanColumns: [],
-      notifications: [],
-      userRewards: [],
-      userAchievements: [],
-    };
-  };
-
-  const buildDepartmentImportPayload = (records: Array<Record<string, string>>): DataImportPayload => {
-    const departmentsPayload = records
-      .filter((record) => record.id && record.name)
-      .map((record) => ({
-        id: record.id,
-        name: record.name,
-      }));
-
-    return {
-      scope: DataExportScope.DEPARTMENTS,
-      departments: departmentsPayload,
-      users: [],
-      tasks: [],
-      achievements: [],
-      rewards: [],
-      kanbanColumns: [],
-      notifications: [],
-      userRewards: [],
-      userAchievements: [],
-    };
-  };
-
-  const handleImportUsers = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const openValidatedImport = (event: React.ChangeEvent<HTMLInputElement>, dataset: 'users' | 'departments') => {
     const file = event.target.files?.[0];
-    if (!file) return;
-
-    setImportLoading(true);
-    try {
-      const content = await file.text();
-      let payload: DataImportPayload;
-      if (file.name.toLowerCase().endsWith('.json')) {
-        const parsed = JSON.parse(content) as Partial<DataImportPayload>;
-        if (!parsed.users) {
-          throw new Error('Invalid JSON backup. Users data not found.');
-        }
-        payload = {
-          scope: DataExportScope.USERS,
-          departments: parsed.departments ?? departments,
-          users: parsed.users,
-          tasks: [],
-          achievements: [],
-          rewards: [],
-          kanbanColumns: [],
-          notifications: [],
-          userRewards: [],
-          userAchievements: [],
-        };
-      } else {
-        payload = buildUserImportPayload(parseCsv(content));
-      }
-
-      const existingEmails = new Set(users.map((user) => user.email.toLowerCase()));
-      const existingIds = new Set(users.map((user) => user.id));
-      const added: string[] = [];
-      const existing: string[] = [];
-
-      payload.users?.forEach((user) => {
-        const email = user.email.toLowerCase();
-        if (existingIds.has(user.id) || existingEmails.has(email)) {
-          existing.push(`${user.name} (${user.email})`);
-        } else {
-          added.push(`${user.name} (${user.email})`);
-        }
-      });
-
-      await api.importData(payload);
-      setImportReport({
-        title: 'User Import Report',
-        added,
-        existing,
-        scope: 'users',
-      });
-      fetchData();
-    } catch (error: any) {
-      console.error('User import failed', error);
-      const message = error instanceof Error ? error.message : String(error ?? '');
-      if (message.includes('Only full imports are supported')) {
-        alert('User import failed. Restart the backend so scoped imports are enabled.');
-      } else {
-        alert('User import failed. Verify the file and try again.');
-      }
-    } finally {
-      setImportLoading(false);
-      event.target.value = '';
-    }
-  };
-
-  const handleImportDepartments = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    setImportLoading(true);
-    try {
-      const content = await file.text();
-      let payload: DataImportPayload;
-      if (file.name.toLowerCase().endsWith('.json')) {
-        const parsed = JSON.parse(content) as Partial<DataImportPayload>;
-        if (!parsed.departments) {
-          throw new Error('Invalid JSON backup. Departments data not found.');
-        }
-        payload = {
-          scope: DataExportScope.DEPARTMENTS,
-          departments: parsed.departments,
-          users: [],
-          tasks: [],
-          achievements: [],
-          rewards: [],
-          kanbanColumns: [],
-          notifications: [],
-          userRewards: [],
-          userAchievements: [],
-        };
-      } else {
-        payload = buildDepartmentImportPayload(parseCsv(content));
-      }
-
-      const existingIds = new Set(departments.map((department) => department.id));
-      const existingNames = new Set(departments.map((department) => department.name.toLowerCase()));
-      const added: string[] = [];
-      const existing: string[] = [];
-
-      payload.departments?.forEach((department) => {
-        const name = department.name.toLowerCase();
-        if (existingIds.has(department.id) || existingNames.has(name)) {
-          existing.push(department.name);
-        } else {
-          added.push(department.name);
-        }
-      });
-
-      await api.importData(payload);
-      setImportReport({
-        title: 'Department Import Report',
-        added,
-        existing,
-        scope: 'departments',
-      });
-      fetchData();
-    } catch (error: any) {
-      console.error('Department import failed', error);
-      const message = error instanceof Error ? error.message : String(error ?? '');
-      if (message.includes('Only full imports are supported')) {
-        alert('Department import failed. Restart the backend so scoped imports are enabled.');
-      } else {
-        alert('Department import failed. Verify the file and try again.');
-      }
-    } finally {
-      setImportLoading(false);
-      event.target.value = '';
-    }
+    if (file) setBackupImport({ file, dataset });
+    event.target.value = '';
   };
 
   const handleToggleStatus = async (userToToggle: User) => {
@@ -1221,23 +870,23 @@ const Users: React.FC = () => {
   );
   const contactProfile = contactUser
     ? {
-        title: contactUser.title ?? profileMap[contactUser.id]?.title,
-        phone: contactUser.phone ?? profileMap[contactUser.id]?.phone,
-      location: contactUser.location ?? profileMap[contactUser.id]?.location,
-      timezone: contactUser.timezone ?? profileMap[contactUser.id]?.timezone,
-      managerEmail: contactUser.managerEmail ?? profileMap[contactUser.id]?.managerEmail,
-      shiftName: contactUser.shiftName ?? profileMap[contactUser.id]?.shiftName,
-      shiftStart: contactUser.shiftStart ?? profileMap[contactUser.id]?.shiftStart,
-      shiftEnd: contactUser.shiftEnd ?? profileMap[contactUser.id]?.shiftEnd,
-      morningBreakStart: contactUser.morningBreakStart ?? profileMap[contactUser.id]?.morningBreakStart,
-      morningBreakEnd: contactUser.morningBreakEnd ?? profileMap[contactUser.id]?.morningBreakEnd,
-      lunchBreakStart: contactUser.lunchBreakStart ?? profileMap[contactUser.id]?.lunchBreakStart,
-      lunchBreakEnd: contactUser.lunchBreakEnd ?? profileMap[contactUser.id]?.lunchBreakEnd,
-      eveningBreakStart: contactUser.eveningBreakStart ?? profileMap[contactUser.id]?.eveningBreakStart,
-      eveningBreakEnd: contactUser.eveningBreakEnd ?? profileMap[contactUser.id]?.eveningBreakEnd,
-      notes: contactUser.notes ?? profileMap[contactUser.id]?.notes,
-      skills: contactUser.skills ?? profileMap[contactUser.id]?.skills,
-      projects: contactUser.projects ?? profileMap[contactUser.id]?.projects,
+        title: contactUser.title,
+        phone: contactUser.phone,
+      location: contactUser.location,
+      timezone: contactUser.timezone,
+      managerEmail: contactUser.managerEmail,
+      shiftName: contactUser.shiftName,
+      shiftStart: contactUser.shiftStart,
+      shiftEnd: contactUser.shiftEnd,
+      morningBreakStart: contactUser.morningBreakStart,
+      morningBreakEnd: contactUser.morningBreakEnd,
+      lunchBreakStart: contactUser.lunchBreakStart,
+      lunchBreakEnd: contactUser.lunchBreakEnd,
+      eveningBreakStart: contactUser.eveningBreakStart,
+      eveningBreakEnd: contactUser.eveningBreakEnd,
+      notes: contactUser.notes,
+      skills: contactUser.skills,
+      projects: contactUser.projects,
       }
     : {};
   const activeManagerId = contactUser?.managerId ?? contactForm.managerId;
@@ -1245,7 +894,7 @@ const Users: React.FC = () => {
     activeManagerId && activeManagerId !== contactUser?.id
       ? users.find((user) => user.id === activeManagerId)?.name || 'Unknown'
       : 'No manager';
-  const contactSkills = contactProfile.skills ?? parseTagInput(contactForm.skills);
+  const contactSkills = contactProfile.skills ?? contactForm.skills;
   const contactProjects = contactProfile.projects ?? parseTagInput(contactForm.projects);
 
   // Pagination logic
@@ -1436,7 +1085,7 @@ const Users: React.FC = () => {
             </button>
               <button
                 onClick={() => userImportInputRef.current?.click()}
-                disabled={importLoading}
+                disabled={currentUser?.role !== Role.OWNER}
                 className="rounded-md border border-emerald-400/40 bg-emerald-500/20 px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-100 transition hover:bg-emerald-500/30 disabled:opacity-50"
               >
                 Import users
@@ -1456,7 +1105,7 @@ const Users: React.FC = () => {
             </button>
             <button
               onClick={() => departmentImportInputRef.current?.click()}
-              disabled={importLoading}
+              disabled={currentUser?.role !== Role.OWNER}
               className="rounded-md border border-purple-400/40 bg-purple-500/20 px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-purple-100 transition hover:bg-purple-500/30 disabled:opacity-50"
             >
               Import departments
@@ -1478,62 +1127,28 @@ const Users: React.FC = () => {
               ref={userImportInputRef}
               type="file"
               accept=".csv,application/json"
-              onChange={handleImportUsers}
+              onChange={(event) => openValidatedImport(event, 'users')}
               className="hidden"
             />
             <input
               ref={departmentImportInputRef}
               type="file"
               accept=".csv,application/json"
-              onChange={handleImportDepartments}
+              onChange={(event) => openValidatedImport(event, 'departments')}
               className="hidden"
             />
           </div>
         )}
       </div>
 
-      {importReport &&
-        createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-            <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-slate-900/95 p-6 shadow-[0_30px_80px_rgba(15,23,42,0.6)]">
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-white">{importReport.title}</h2>
-                <button
-                  onClick={() => setImportReport(null)}
-                  className="text-xs uppercase tracking-[0.2em] text-white/60 hover:text-white"
-                >
-                  Close
-                </button>
-              </div>
-              <p className="mt-3 text-sm text-white/70">
-                {importReport.added.length} added · {importReport.existing.length} already existed
-              </p>
-              <div className="mt-4 grid gap-4 md:grid-cols-2">
-                <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-3">
-                  <p className="text-xs uppercase tracking-[0.2em] text-emerald-200">Added</p>
-                  <div className="mt-2 max-h-40 space-y-1 overflow-y-auto text-xs text-emerald-100">
-                    {importReport.added.length === 0 ? (
-                      <p className="text-emerald-200/70">No new entries.</p>
-                    ) : (
-                      importReport.added.map((item) => <p key={item}>{item}</p>)
-                    )}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 p-3">
-                  <p className="text-xs uppercase tracking-[0.2em] text-amber-200">Already exists</p>
-                  <div className="mt-2 max-h-40 space-y-1 overflow-y-auto text-xs text-amber-100">
-                    {importReport.existing.length === 0 ? (
-                      <p className="text-amber-200/70">No duplicates.</p>
-                    ) : (
-                      importReport.existing.map((item) => <p key={item}>{item}</p>)
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>,
-          document.body
-        )}
+      {backupImport && currentUser?.role === Role.OWNER && createPortal(
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/70 p-4" role="dialog" aria-modal="true" aria-label="Validated backup import" onKeyDown={(event) => { if (event.key === 'Escape') setBackupImport(null); }}>
+          <div className="mx-auto my-4 w-full max-w-6xl rounded-xl border border-border-color bg-surface p-4 sm:p-6 shadow-xl">
+            <div className="mb-4 flex justify-end"><button type="button" autoFocus onClick={() => setBackupImport(null)} className="rounded-lg border border-border-color px-3 py-2 text-sm text-text-primary">Close import manager</button></div>
+            <BackupManager initialTab="import" initialFile={backupImport.file} initialDataset={backupImport.dataset} requestedBy={currentUser.name || currentUser.email} onRestored={() => { void fetchData(); }} />
+          </div>
+        </div>, document.body
+      )}
 
         {isDepartmentModalOpen &&
           createPortal(
@@ -1934,7 +1549,6 @@ const Users: React.FC = () => {
                 {paginatedUsers.map((user) => {
                   const lastActive = getLastActiveInfo(user);
                   const isOnline = onlineUserIds.has(user.id);
-                  const avatarUrl = getUserAvatarUrl(user);
                   return (
                     <tr
                       key={user.id}
@@ -1948,13 +1562,7 @@ const Users: React.FC = () => {
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
                           <div className="h-8 w-8 overflow-hidden rounded-full border border-gray-300 dark:border-gray-600 flex-shrink-0">
-                            {avatarUrl ? (
-                              <img src={avatarUrl} alt={user.name} className="h-full w-full object-cover" />
-                            ) : (
-                              <div className="flex h-full w-full items-center justify-center bg-gray-200 dark:bg-gray-700 text-xs font-semibold uppercase text-gray-700 dark:text-gray-300">
-                                {user.name.slice(0, 2)}
-                              </div>
-                            )}
+                            <Avatar user={user} className="h-full w-full" />
                           </div>
                           <div>
                             <div className="flex items-center gap-2">
@@ -2073,11 +1681,11 @@ const Users: React.FC = () => {
       {contactUser &&
         createPortal(
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6">
-            <div className="w-full max-w-3xl lg:max-w-4xl max-h-[85vh] overflow-y-auto rounded-2xl border border-white/10 bg-slate-900/95 p-4 sm:p-6 shadow-[0_30px_80px_rgba(15,23,42,0.6)]">
+            <div role="dialog" aria-modal="true" aria-labelledby="employee-profile-title" className="w-full max-w-3xl lg:max-w-4xl max-h-[85vh] overflow-y-auto rounded-2xl border border-white/10 bg-slate-900/95 p-4 sm:p-6 shadow-[0_30px_80px_rgba(15,23,42,0.6)]">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <p className="text-xs uppercase tracking-[0.2em] text-white/60">User details</p>
-                  <h3 className="mt-2 text-2xl font-semibold text-white">{contactUser.name}</h3>
+                  <h3 id="employee-profile-title" className="mt-2 text-2xl font-semibold text-white">{contactUser.name}</h3>
                   <p className="text-sm text-white/60">{contactUser.email}</p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -2099,7 +1707,7 @@ const Users: React.FC = () => {
                         setContactEditing(true);
                         setContactError(null);
                       }}
-                      disabled={!canEditContacts}
+                      disabled={!canEditContacts || (contactUser.role === Role.OWNER && currentUser?.role !== Role.OWNER)}
                       className="rounded-lg border border-blue-400/40 bg-blue-500/20 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-blue-100 transition hover:bg-blue-500/30 disabled:opacity-50"
                     >
                       Edit
@@ -2115,6 +1723,8 @@ const Users: React.FC = () => {
                 </div>
               </div>
 
+              <EmployeeIdentityCard user={contactUser} department={departments.find(department => department.id === contactUser.departmentId)?.name ?? contactForm.department} />
+
               {isContactEditing ? (
                 <>
                   <div className="mt-6 grid gap-5 md:grid-cols-2">
@@ -2122,6 +1732,12 @@ const Users: React.FC = () => {
                       <div className="rounded-xl border border-white/10 bg-slate-950/70 p-4">
                         <p className="text-xs uppercase tracking-[0.2em] text-white/60">Contact</p>
                         <div className="mt-3 space-y-3">
+                          <label className="block text-xs uppercase tracking-[0.2em] text-white/50">
+                            Professional bio
+                            <textarea value={contactForm.profileBio} maxLength={500} rows={4}
+                              onChange={event => setContactForm(previous => ({ ...previous, profileBio: event.target.value }))}
+                              className="mt-1 w-full rounded-lg border border-white/10 bg-slate-900/80 px-3 py-2 text-sm text-white" />
+                          </label>
                           <label className="block text-xs uppercase tracking-[0.2em] text-white/50">
                             Name
                             <input
@@ -2363,16 +1979,8 @@ const Users: React.FC = () => {
                       <div className="rounded-xl border border-white/10 bg-slate-950/70 p-4">
                         <p className="text-xs uppercase tracking-[0.2em] text-white/60">Skills & projects</p>
                         <div className="mt-3 space-y-3">
-                          <label className="block text-xs uppercase tracking-[0.2em] text-white/50">
-                            Skills (comma separated)
-                            <input
-                              type="text"
-                              value={contactForm.skills}
-                              onChange={(event) => setContactForm((prev) => ({ ...prev, skills: event.target.value }))}
-                              disabled={!isContactEditing}
-                              className="mt-1 w-full rounded-lg border border-white/10 bg-slate-900/80 px-3 py-2 text-sm text-white disabled:opacity-60"
-                            />
-                          </label>
+                          <div><SkillsEditor value={contactForm.skills} suggestions={[...new Set(users.flatMap(person => person.skills ?? []))]}
+                                onChange={skills => setContactForm(previous => ({ ...previous, skills }))} /></div>
                           <label className="block text-xs uppercase tracking-[0.2em] text-white/50">
                             Projects (comma separated)
                             <input
@@ -2404,10 +2012,10 @@ const Users: React.FC = () => {
 
                   <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
                     <div className="text-xs uppercase tracking-[0.2em] text-white/50">
-                      {canEditContacts ? 'Editable by owner' : 'Read only'}
+                      {canEditContacts ? 'Editable by administrators' : 'Read only'}
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      {canEditContacts && (
+                      {currentUser?.role === Role.OWNER && (
                         <button
                           type="button"
                           onClick={handleDeleteContactUser}
@@ -2430,8 +2038,14 @@ const Users: React.FC = () => {
                 </>
               ) : (
                 <>
-                  <div className="mt-6 grid gap-5 md:grid-cols-2">
-                    <div className="space-y-4">
+                  <section className="mt-5 rounded-xl border border-white/10 p-4" aria-label="Assigned projects">
+                    <h3 className="text-sm font-semibold text-white">Assigned Projects</h3>
+                    <div className="mt-3 flex flex-wrap gap-2">{contactProjects.length ? contactProjects.map(project => <span key={project} className="rounded-full border border-cyan-400/25 px-3 py-1 text-xs text-cyan-100">{project}</span>) : <p className="text-sm text-white/60">No projects assigned.</p>}</div>
+                  </section>
+                  <details className="mt-5 rounded-xl border border-white/10 p-4">
+                    <summary className="cursor-pointer text-sm font-semibold text-cyan-200">Additional Details</summary>
+                  <div className="mt-4 grid gap-5 md:grid-cols-2">
+
                       <div className="rounded-xl border border-white/10 bg-slate-950/70 p-4">
                         <p className="text-xs uppercase tracking-[0.2em] text-white/60">Contact</p>
                         <div className="mt-3 space-y-2 text-sm text-white/80">
@@ -2533,48 +2147,6 @@ const Users: React.FC = () => {
                           </div>
                         </div>
                       </div>
-                    </div>
-
-                    <div className="space-y-4">
-                      <div className="rounded-xl border border-white/10 bg-slate-950/70 p-4">
-                        <p className="text-xs uppercase tracking-[0.2em] text-white/60">Skills & projects</p>
-                        <div className="mt-3 space-y-4">
-                          <div>
-                            <p className="text-xs uppercase tracking-[0.2em] text-white/50">Skills</p>
-                            {contactSkills.length > 0 ? (
-                              <div className="mt-2 flex flex-wrap gap-2">
-                                {contactSkills.map((skill, index) => (
-                                  <span
-                                    key={`${skill}-${index}`}
-                                    className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-100"
-                                  >
-                                    {skill}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : (
-                              <p className="mt-2 text-sm text-white/50">No skills listed.</p>
-                            )}
-                          </div>
-                          <div>
-                            <p className="text-xs uppercase tracking-[0.2em] text-white/50">Projects</p>
-                            {contactProjects.length > 0 ? (
-                              <div className="mt-2 flex flex-wrap gap-2">
-                                {contactProjects.map((project, index) => (
-                                  <span
-                                    key={`${project}-${index}`}
-                                    className="rounded-full border border-sky-400/30 bg-sky-500/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-sky-100"
-                                  >
-                                    {project}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : (
-                              <p className="mt-2 text-sm text-white/50">No projects listed.</p>
-                            )}
-                          </div>
-                        </div>
-                      </div>
 
                       <div className="rounded-xl border border-white/10 bg-slate-950/70 p-4">
                         <p className="text-xs uppercase tracking-[0.2em] text-white/60">Notes</p>
@@ -2582,12 +2154,14 @@ const Users: React.FC = () => {
                           {contactForm.notes.trim() ? contactForm.notes : 'No notes added yet.'}
                         </p>
                       </div>
-                    </div>
+
                   </div>
 
+                  </details>
+
                   <div className="mt-6 flex flex-wrap items-center justify-between gap-3 text-xs uppercase tracking-[0.2em] text-white/50">
-                    <span>{canEditContacts ? 'Editable by owner' : 'Read only'}</span>
-                    <span>{canEditContacts ? 'Select edit to update details.' : 'Contact the owner to edit.'}</span>
+                    <span>{canEditContacts ? 'Editable by administrators' : 'Read only'}</span>
+                    <span>{canEditContacts ? 'Select edit to update details.' : 'Contact an administrator to edit.'}</span>
                   </div>
                 </>
               )}
@@ -2607,7 +2181,7 @@ const Users: React.FC = () => {
               zIndex: 9999,
               transformOrigin: menuPosition.flip ? 'bottom right' : 'top right',
             }}
-            className={`w-52 rounded-xl shadow-2xl ring-1 ring-white/10 border border-white/10 
+            className={`w-52 rounded-xl shadow-2xl ring-1 ring-white/10 border border-white/10
               bg-neutral-900/90 backdrop-blur-md overflow-hidden
               animate-[fadeSlide_${menuPosition.flip ? 'up' : 'down'}_0.18s_ease-out_forwards]`}
             role="menu"
@@ -2630,6 +2204,7 @@ const Users: React.FC = () => {
             />
 
             <div className="py-1">
+              {canEditContacts && <>
               <button
                 onClick={() => {
                   setEditingUser(users.find((u) => u.id === openMenuId) || null);
@@ -2665,6 +2240,7 @@ const Users: React.FC = () => {
                 <KeyIcon className="h-4 w-4 text-rose-400 group-hover:scale-110 transition-transform" />
                 <span>Reset Password</span>
               </button>
+              </>}
             </div>
 
             <div className="h-px bg-white/10" />
@@ -2676,7 +2252,7 @@ const Users: React.FC = () => {
                   if (u) handleToggleStatus(u);
                   closeMenu();
                 }}
-                className="w-full group flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/5 focus:bg-white/5 focus:outline-none 
+                className="w-full group flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/5 focus:bg-white/5 focus:outline-none
                   text-gray-200"
                 role="menuitem"
               >
@@ -2688,6 +2264,7 @@ const Users: React.FC = () => {
                 <span>{toggleLabel}</span>
               </button>
 
+              {(currentUser?.role !== Role.MANAGER || openUser?.role === Role.USER) && (
               <button
                 onClick={() => {
                   const u = users.find((x) => x.id === openMenuId);
@@ -2700,6 +2277,7 @@ const Users: React.FC = () => {
                 <TrashIcon className="h-4 w-4 group-hover:scale-110 transition-transform" />
                 <span>Delete</span>
               </button>
+              )}
             </div>
           </div>,
           document.body
@@ -2812,5 +2390,4 @@ const Users: React.FC = () => {
 };
 
 export default Users;
-
 

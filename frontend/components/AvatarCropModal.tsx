@@ -1,4 +1,5 @@
-import React, { useCallback, useState } from 'react';
+import { Dialog, DialogPanel, DialogTitle } from '@headlessui/react';
+import React, { useCallback, useEffect, useState } from 'react';
 import Cropper, { Area } from 'react-easy-crop';
 import { AvatarCropMetadata } from '../types';
 import { getCroppedImageDataUrl } from '../utils/image';
@@ -11,6 +12,7 @@ interface AvatarCropModalProps {
   onComplete?: (dataUrl: string) => void;
   onCompleteWithMetadata?: (metadata: AvatarCropMetadata) => Promise<void> | void;
   aspect?: number;
+  uploadProgress?: number;
 }
 
 const AvatarCropModal: React.FC<AvatarCropModalProps> = ({
@@ -19,7 +21,9 @@ const AvatarCropModal: React.FC<AvatarCropModalProps> = ({
   title = 'Adjust avatar',
   onCancel,
   onComplete,
+  onCompleteWithMetadata,
   aspect = 1,
+  uploadProgress,
 }) => {
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
@@ -27,6 +31,7 @@ const AvatarCropModal: React.FC<AvatarCropModalProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const rotation = 0;
+  useEffect(() => { setCrop({ x: 0, y: 0 }); setZoom(1); setCroppedAreaPixels(null); setError(null); }, [imageSrc]);
 
   const handleCropComplete = useCallback((_croppedArea: Area, croppedPixels: Area) => {
     setCroppedAreaPixels(croppedPixels);
@@ -39,6 +44,7 @@ const AvatarCropModal: React.FC<AvatarCropModalProps> = ({
     }
 
     try {
+      setError(null);
       setIsSaving(true);
       if (onCompleteWithMetadata) {
         const metadata: AvatarCropMetadata = {
@@ -67,13 +73,15 @@ const AvatarCropModal: React.FC<AvatarCropModalProps> = ({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+    <Dialog open={isOpen} onClose={isSaving ? () => {} : onCancel} className="fixed inset-0 z-[90]">
+    <div className="fixed inset-0 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+      <DialogPanel className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
         <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-800">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{title}</h2>
+          <DialogTitle className="text-lg font-semibold text-slate-900 dark:text-slate-100">{title}</DialogTitle>
           <button
             type="button"
             onClick={onCancel}
+            disabled={isSaving}
             className="rounded-full p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
             aria-label="Close cropper"
           >
@@ -87,6 +95,7 @@ const AvatarCropModal: React.FC<AvatarCropModalProps> = ({
             crop={crop}
             zoom={zoom}
             aspect={aspect}
+            cropShape="round"
             onCropChange={setCrop}
             onZoomChange={setZoom}
             onCropComplete={handleCropComplete}
@@ -95,13 +104,14 @@ const AvatarCropModal: React.FC<AvatarCropModalProps> = ({
           />
         </div>
 
-        <div className="flex items-center justify-between border-t border-slate-200 px-6 py-4 dark:border-slate-800">
+        <div className="flex flex-wrap gap-4 items-center justify-between border-t border-slate-200 px-6 py-4 dark:border-slate-800">
           <div className="flex items-center gap-3">
             <label className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
               Zoom
             </label>
             <input
               type="range"
+              aria-label="Avatar zoom"
               min={1}
               max={3}
               step={0.1}
@@ -115,6 +125,7 @@ const AvatarCropModal: React.FC<AvatarCropModalProps> = ({
             <button
               type="button"
               onClick={onCancel}
+            disabled={isSaving}
               className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
             >
               Cancel
@@ -130,13 +141,18 @@ const AvatarCropModal: React.FC<AvatarCropModalProps> = ({
           </div>
         </div>
 
+        {isSaving && uploadProgress !== undefined && <div className="px-6 pb-3" role="status" aria-live="polite">
+          <p className="mb-1 text-sm text-slate-400">{uploadProgress < 100 ? `Uploading ${Math.round(uploadProgress)}%` : 'Processing image?'}</p>
+          <progress aria-label="Avatar upload progress" value={uploadProgress} max={100} className="w-full" />
+        </div>}
         {error && (
           <div className="border-t border-rose-200 bg-rose-50 px-6 py-3 text-sm font-medium text-rose-600 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200">
             {error}
           </div>
         )}
-      </div>
+      </DialogPanel>
     </div>
+    </Dialog>
   );
 };
 

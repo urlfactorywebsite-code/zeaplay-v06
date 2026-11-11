@@ -24,6 +24,7 @@ export interface TaskPointsSummary {
 }
 
 export interface UserTaskPointsSummary {
+    additionalSubtaskPoints?: number;
     total: number;
     taskPoints: number;
     creationPoints: number;
@@ -349,7 +350,8 @@ export const calculateUserPointsForTask = (
     const isAssignee = task.assignedTo?.includes(userId) ?? false;
     const isCreator = task.createdBy === userId;
 
-    const taskPoints = isAssignee && taskSummary ? taskSummary.value : 0;
+    const additionalSubtaskPoints = task.subtaskRewards?.earned_by_recipient[userId] ?? 0;
+    const taskPoints = (isAssignee && taskSummary ? taskSummary.value : 0) + additionalSubtaskPoints;
     const creationPoints = isCreator ? loadTaskCreationPoints() : 0;
     const clarityPoints =
         isCreator && task.clarityRating !== null && task.clarityRating !== undefined
@@ -363,6 +365,7 @@ export const calculateUserPointsForTask = (
     return {
         total: taskPoints + creationPoints + clarityPoints + managerPenalty,
         taskPoints,
+        additionalSubtaskPoints,
         creationPoints,
         clarityPoints,
         managerPenalty,

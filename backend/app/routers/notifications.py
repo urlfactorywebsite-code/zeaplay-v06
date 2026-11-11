@@ -1,15 +1,24 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_active_user
 from ..services import audit_logger
+from ..services.workload_notifications import visible_query, preferences, quiet
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
+
+
+def _publish_inbox(user):
+    from ..services.task_events import publish_task_event
+    try:
+        publish_task_event({"type": "notifications.changed", "tenant_id": str(user.tenant_id), "user_id": user.id})
+    except Exception:
+        pass  # Durable state is authoritative; refetch on reconnect.
 
 
 @router.get("", response_model=list[schemas.NotificationRead])
@@ -17,12 +26,21 @@ def list_notifications(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user),
 ):
-    stmt = (
-        select(models.Notification)
-        .where(models.Notification.user_id == current_user.id)
-        .order_by(models.Notification.created_at.desc())
-    )
+    stmt = visible_query(current_user, db).order_by(models.Notification.created_at.desc(), models.Notification.id.desc())
     return db.execute(stmt).scalars().all()
+
+
+@router.get("/inbox")
+def inbox(limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db), current_user: models.User = Depends(get_current_active_user)):
+    query = visible_query(current_user, db)
+    rows = db.scalars(query.order_by(models.Notification.created_at.desc(), models.Notification.id.desc()).offset(offset).limit(limit)).all()
+    unread = db.scalar(select(func.count()).select_from(query.where(models.Notification.is_read.is_(False)).subquery()))
+    pref = preferences(db, current_user.id)
+    return {"user_id": current_user.id, "items": [schemas.NotificationRead.model_validate(n) for n in rows],
+        "unread_count": unread, "sound_enabled": bool(pref and pref.sound_enabled),
+        "push_enabled": pref.push_enabled if pref else True,
+        "quiet": quiet(pref, current_user, models.utc_now()), "server_now": models.utc_now()}
 
 
 @router.post("/read-all", status_code=status.HTTP_204_NO_CONTENT)
@@ -30,7 +48,7 @@ def mark_all_read(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user),
 ) -> None:
-    stmt = select(models.Notification).where(models.Notification.user_id == current_user.id)
+    stmt = visible_query(current_user, db)
     notifications = db.execute(stmt).scalars().all()
     for notification in notifications:
         notification.is_read = True
@@ -58,6 +76,7 @@ def mark_all_read(
         )
     )
     db.commit()
+    _publish_inbox(current_user)
 
 
 @router.post("/read", status_code=status.HTTP_204_NO_CONTENT)
@@ -69,8 +88,7 @@ def mark_notifications_read(
     if not notification_ids:
         return
     notifications = db.execute(
-        select(models.Notification).where(
-            models.Notification.user_id == current_user.id,
+        visible_query(current_user, db).where(
             models.Notification.id.in_(notification_ids),
         )
     ).scalars().all()
@@ -100,6 +118,7 @@ def mark_notifications_read(
         )
     )
     db.commit()
+    _publish_inbox(current_user)
 
 
 @router.post("/{notification_id}/read", status_code=status.HTTP_204_NO_CONTENT)
@@ -108,8 +127,8 @@ def mark_notification_read(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user),
 ) -> None:
-    notification = db.get(models.Notification, notification_id)
-    if not notification or notification.user_id != current_user.id:
+    notification = db.scalar(visible_query(current_user, db).where(models.Notification.id == notification_id))
+    if not notification:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found")
     notification.is_read = True
     audit_logger.log_event(
@@ -135,6 +154,7 @@ def mark_notification_read(
         )
     )
     db.commit()
+    _publish_inbox(current_user)
 
 
 @router.delete("/{notification_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -143,10 +163,15 @@ def delete_notification(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user),
 ) -> None:
-    notification = db.get(models.Notification, notification_id)
-    if not notification or notification.user_id != current_user.id:
+    notification = db.scalar(visible_query(current_user, db).where(models.Notification.id == notification_id))
+    if not notification:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found")
-    db.delete(notification)
+    if notification.dedupe_key:
+        notification.dismissed_at = models.utc_now()
+        notification.is_read = True
+        notification.delivery_pending = False
+    else:
+        db.delete(notification)
     audit_logger.log_event(
         audit_logger.AuditLogInput(
             action="NOTIFICATION_DELETED",
@@ -170,3 +195,4 @@ def delete_notification(
         )
     )
     db.commit()
+    _publish_inbox(current_user)

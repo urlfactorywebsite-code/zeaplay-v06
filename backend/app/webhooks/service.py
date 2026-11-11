@@ -123,26 +123,58 @@ def resolve_event_data(db: Session, event_name: str, payload: Any | None) -> dic
     return payloads.get_sample_data(db, event_name)
 
 
-def queue_event(db: Session, *, event_name: str, data: dict[str, Any]) -> list[WebhookDeliveryLog]:
+def event_tenant(db: Session, data: dict[str, Any]) -> uuid.UUID | None:
+    """Resolve trusted domain event ownership; never guess a multi-tenant owner."""
+    user_data = data.get("user")
+    if isinstance(user_data, dict) and user_data.get("id"):
+        user = db.get(payloads.models.User, str(user_data["id"]))
+        if user:
+            return user.tenant_id
+    for value in (data, data.get("ticket"), data.get("user"), data.get("conversation"), data.get("message")):
+        if isinstance(value, dict) and value.get("tenant_id"):
+            return uuid.UUID(str(value["tenant_id"]))
+    for value in (data, data.get("task"), data.get("comment"), data.get("user"), data.get("notification"), data.get("claim")):
+        if not isinstance(value, dict):
+            continue
+        for field in ("created_by_id", "created_by", "user_id", "actor_user_id", "author_id"):
+            if value.get(field):
+                user = db.get(payloads.models.User, str(value[field]))
+                if user and user.tenant_id:
+                    return user.tenant_id
+    ticket_id = data.get("ticket_id")
+    if ticket_id:
+        ticket = db.get(payloads.ticket_models.Ticket, uuid.UUID(str(ticket_id)))
+        if ticket:
+            return ticket.tenant_id
+    tenants = db.query(payloads.models.User.tenant_id).distinct().limit(2).all()
+    return tenants[0][0] if len(tenants) == 1 else None
+
+
+def queue_event(db: Session, *, event_name: str, data: dict[str, Any], tenant_id: uuid.UUID | None = None) -> list[WebhookDeliveryLog]:
     if not _is_event_allowed(event_name):
         return []
     if isinstance(data, dict) and {"event", "occurred_at", "ticket_id", "actor_user_id", "actor_name"}.issubset(data):
         payload = data
     else:
         payload = payloads.build_payload(event_name, data)
-    return dispatcher.queue_webhook_deliveries(db, event_type=event_name, payload=payload)
+    return dispatcher.queue_webhook_deliveries(db, event_type=event_name, payload=payload, tenant_id=tenant_id or event_tenant(db, data))
 
 
-def enqueue_event(event_name: str, payload: Any | None) -> None:
+def enqueue_event(event_name: str, payload: Any | None, *, tenant_id: uuid.UUID | None = None) -> None:
     if not _is_event_allowed(event_name):
         return
     try:
         with SessionLocal() as db:
             data = resolve_event_data(db, event_name, payload)
+            resolved_tenant = event_tenant(db, data)
+            if tenant_id is not None and resolved_tenant != tenant_id:
+                logger.warning("Rejected webhook event with mismatched tenant ownership")
+                return
             dispatcher.queue_webhook_deliveries(
                 db,
                 event_type=event_name,
                 payload=payloads.build_payload(event_name, data),
+                tenant_id=tenant_id or resolved_tenant,
             )
             db.commit()
     except Exception:
@@ -157,9 +189,8 @@ def create_test_delivery(
     data: dict[str, Any],
 ) -> WebhookDeliveryLog:
     payload = payloads.build_payload(event_name, data)
-    settings = get_settings()
     log = WebhookDeliveryLog(
-        tenant_id=uuid.UUID(settings.default_tenant_id),
+        tenant_id=webhook.tenant_id,
         subscription_id=webhook.id,
         event_type=event_name,
         payload=payload,

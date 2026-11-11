@@ -40,7 +40,7 @@ const resolvePresenceUrl = (): string | null => {
     }
     const host = window.location.hostname;
     const isLocalhost = host === 'localhost' || host === '127.0.0.1';
-    return isLocalhost ? 'http://localhost:6212' : null;
+    return isLocalhost ? 'http://localhost:7212' : null;
 };
 
 export const usePresence = (): PresenceState => {

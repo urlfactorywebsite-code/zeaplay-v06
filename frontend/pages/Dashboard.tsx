@@ -6,7 +6,9 @@ import TaskStatusBadge from '../components/ui/TaskStatusBadge';
 import TaskPriorityBadge from '../components/ui/TaskPriorityBadge';
 import { formatDate } from '../utils';
 import TaskDetailModal from '../components/TaskDetailModal';
-import { augmentTasksWithPoints, calculateUserPointsFromTasks } from '../utils/taskPoints';
+import { augmentTasksWithPoints } from '../utils/taskPoints';
+import { summarizeSubtaskRewards } from '../utils/subtaskRewardSummary';
+import { TASKS_CHANGED_EVENT } from '../utils/taskEvents';
 import { loadPointsConfig, POINTS_CONFIG_UPDATED_EVENT } from '../utils/pointsConfigStorage';
 import { LEVELS_CONFIG_UPDATED_EVENT, getLevelProgress, loadLevelsConfig } from '../utils/levelsConfigStorage';
 import { BoltIcon, ChartBarIcon, RocketLaunchIcon, SparklesIcon, TrophyIcon } from '../components/icons';
@@ -259,6 +261,11 @@ const Dashboard: React.FC = () => {
     useEffect(() => {
         fetchDashboardData();
     }, [fetchDashboardData]);
+    useEffect(() => {
+        const refresh = () => { void fetchDashboardData(); };
+        window.addEventListener(TASKS_CHANGED_EVENT, refresh);
+        return () => window.removeEventListener(TASKS_CHANGED_EVENT, refresh);
+    }, [fetchDashboardData]);
 
     useEffect(() => {
         if (typeof window === 'undefined') {
@@ -367,7 +374,8 @@ const Dashboard: React.FC = () => {
     const focusCount = filteredTasks.filter((task) => focusStatuses.includes(task.status)).length;
     const blockedCount = filteredTasks.filter((task) => task.status === TaskStatus.BLOCKED).length;
 
-    const xpScore = user ? calculateUserPointsFromTasks(allTasks, user.id, { user }) : 0;
+    const xpScore = user ? usersMap.get(user.id)?.points ?? user.points : 0;
+    const additionalRewards = summarizeSubtaskRewards(allTasks, user?.id);
     const levelProgressData = useMemo(() => getLevelProgress(xpScore, levelsConfig), [xpScore, levelsConfig]);
     const level = levelProgressData.level;
     const xpIntoLevel = levelProgressData.pointsIntoLevel;
@@ -469,6 +477,8 @@ const Dashboard: React.FC = () => {
         ? 'from-[#22D3EE] to-[#3B82F6]'
         : 'from-cyan-400 to-blue-500';
     const topStatCards = [
+        { label:'Subtask XP Earned', value:additionalRewards.earned, accent:'linear-gradient(135deg, rgba(45,212,191,0.78), rgba(34,211,238,0.68))', icon:BoltIcon },
+        { label:'Subtask Base Available', value:additionalRewards.availableBase, accent:'linear-gradient(135deg, rgba(96,165,250,0.78), rgba(167,139,250,0.68))', icon:TrophyIcon },
         {
             label: 'Quests Assigned',
             value: totalTasks,

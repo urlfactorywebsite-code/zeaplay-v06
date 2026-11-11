@@ -1,0 +1,26 @@
+{
+  "type": "Actual Header/providers/components with synthetic API and WebSocket fixtures; actual backend routes/JWT sockets tested separately",
+  "desktop": "1280x900",
+  "mobile": "390x844",
+  "passed": [
+    "Five numbered slots and five starts; sixth button disabled",
+    "Double click generated one request",
+    "Pause releases slot and freezes elapsed",
+    "Resume denied at full capacity; works when slot available",
+    "Parent and selected subtask names in compact header",
+    "Actual start/end untouched by activity",
+    "Reload restored five active parents",
+    "Socket reconnect triggered aggregate refetch; one live task socket",
+    "Manual confirmation required; Asia/Kolkata 09:00 converted to 03:30 UTC",
+    "Overlapping interval error shown",
+    "Correction reconfirmed and original retained as superseded",
+    "Viewed report has no activity/work-log mutation controls",
+    "Enter opens dialog; Escape closes; mobile menu remains usable",
+    "No horizontal overflow at tested desktop/mobile sizes"
+  ],
+  "limits": [
+    "Synthetic data and simulated browser transport",
+    "No real Redis or installed proxy/auth UI E2E",
+    "External fixture images replaced and media blocked"
+  ]
+}

@@ -1,0 +1,591 @@
+[
+  {
+    "run": "pg-final-regression",
+    "test": "test_authenticated_workflow_rewards_information_notifications_and_legacy",
+    "property": "accounting",
+    "value": {
+      "additional_components": {
+        "BASE": 60,
+        "BONUS": 15,
+        "PENALTY": -15
+      },
+      "after_reopen_and_reassignment": {
+        "worker": 0,
+        "watcher": 15
+      }
+    }
+  },
+  {
+    "run": "pg-final-regression",
+    "test": "test_main_additional_bonus_penalty_and_final_balance_example",
+    "property": "financial_example",
+    "value": {
+      "additional_subtask_base": 60,
+      "additional_subtask_bonus": 15,
+      "additional_subtask_penalty": -15,
+      "after_reopen": {
+        "additional_base": 30,
+        "additional_bonus": 0,
+        "additional_penalty": -15,
+        "compensating_entries": [
+          -30,
+          -15
+        ],
+        "main_earned": 45,
+        "new_policy_earned": 15,
+        "wallet": 160
+      },
+      "closing_wallet": 205,
+      "main_task_base": 30,
+      "main_task_bonus": 15,
+      "main_task_penalty": 0,
+      "new_policy_earned": 60,
+      "opening_wallet": 100,
+      "total_earned_this_example": 105
+    }
+  },
+  {
+    "run": "pg-final-regression",
+    "test": "test_postgres_scoped_lookup_query_plans",
+    "property": "query_plans",
+    "value": {
+      "ledger": "GroupAggregate  (cost=8.35..8.37 rows=1 width=15) (actual time=0.034..0.035 rows=1 loops=1)\n  Group Key: user_id\n  Buffers: shared hit=3\n  ->  Sort  (cost=8.35..8.35 rows=1 width=11) (actual time=0.030..0.031 rows=2 loops=1)\n        Sort Key: user_id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=3\n        ->  Index Scan using ix_xp_ledger_task_ref on xp_ledger  (cost=0.29..8.34 rows=1 width=11) (actual time=0.016..0.017 rows=2 loops=1)\n              Index Cond: ((task_id)::text = 'task'::text)\n              Filter: ((tenant_id = '08089680-ba0a-42f7-bff3-d8da1b788320'::uuid) AND (record_version = 2) AND ((ref_type)::text = 'subtask-additional-v1'::text))\n              Buffers: shared hit=3\nPlanning:\n  Buffers: shared hit=96\nPlanning Time: 0.665 ms\nExecution Time: 0.070 ms",
+      "ordinal": "Sort  (cost=8.31..8.32 rows=1 width=23) (actual time=0.031..0.032 rows=2 loops=1)\n  Sort Key: created_at, id\n  Sort Method: quicksort  Memory: 25kB\n  Buffers: shared hit=4\n  ->  Index Scan using ix_subtasks_task_policy on subtasks  (cost=0.29..8.30 rows=1 width=23) (actual time=0.021..0.022 rows=2 loops=1)\n        Index Cond: (((task_id)::text = 'task'::text) AND ((point_policy_version)::text = 'subtask-additional-v1'::text))\n        Filter: (deleted_at IS NULL)\n        Buffers: shared hit=4\nPlanning:\n  Buffers: shared hit=55\nPlanning Time: 0.380 ms\nExecution Time: 0.055 ms"
+    }
+  },
+  {
+    "run": "pg-final-regression",
+    "test": "test_profile_snapshots_are_read_only",
+    "property": "profile",
+    "value": {
+      "requests": 10,
+      "sql_per_snapshot": 7.0,
+      "median_ms": 12.742099999741185,
+      "max_ms": 26.949300001433585,
+      "writes": 0
+    }
+  },
+  {
+    "run": "pg-final-regression",
+    "test": "test_profile_two_hundred_user_snapshots",
+    "property": "profile",
+    "value": {
+      "users": 200,
+      "concurrency": 20,
+      "requests": 200,
+      "seconds": 1.5551543999972637,
+      "requests_per_second": 128.6045938592026,
+      "sql_per_snapshot": 7.0,
+      "median_ms": 112.26374999750988,
+      "p95_ms": 152.75870000186842,
+      "writes": 0
+    }
+  },
+  {
+    "run": "pg-final-regression",
+    "test": "test_targeted_socket_fanout_checks_each_identity_once",
+    "property": "fanout",
+    "value": {
+      "users": 200,
+      "tabs": 201,
+      "authorization_checks": 1,
+      "deliveries": 2
+    }
+  },
+  {
+    "run": "pg-final-regression",
+    "test": "test_postgres_snapshot_lookup_query_plans",
+    "property": "query_plans",
+    "value": {
+      "contexts": [
+        {
+          "Plan": {
+            "Node Type": "Index Scan",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Scan Direction": "Forward",
+            "Index Name": "ix_activity_tenant_user_status",
+            "Relation Name": "task_activity_contexts",
+            "Alias": "task_activity_contexts",
+            "Startup Cost": 0.28,
+            "Total Cost": 15.38,
+            "Plan Rows": 5,
+            "Plan Width": 161,
+            "Actual Startup Time": 0.01,
+            "Actual Total Time": 0.011,
+            "Actual Rows": 5,
+            "Actual Loops": 1,
+            "Index Cond": "((tenant_id = 'cd4b90bc-e6ef-4a0e-8e93-409cb6f8fac9'::uuid) AND ((user_id)::text = 'profile-000'::text))",
+            "Rows Removed by Index Recheck": 0,
+            "Shared Hit Blocks": 3,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0
+          },
+          "Planning": {
+            "Shared Hit Blocks": 83,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0
+          },
+          "Planning Time": 0.447,
+          "Triggers": [],
+          "Execution Time": 0.027
+        }
+      ],
+      "parents": [
+        {
+          "Plan": {
+            "Node Type": "Nested Loop",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Join Type": "Inner",
+            "Startup Cost": 21.89,
+            "Total Cost": 52.15,
+            "Plan Rows": 10,
+            "Plan Width": 15,
+            "Actual Startup Time": 0.023,
+            "Actual Total Time": 0.03,
+            "Actual Rows": 5,
+            "Actual Loops": 1,
+            "Inner Unique": true,
+            "Shared Hit Blocks": 15,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "Plans": [
+              {
+                "Node Type": "Bitmap Heap Scan",
+                "Parent Relationship": "Outer",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Relation Name": "tasks",
+                "Alias": "tasks",
+                "Startup Cost": 21.73,
+                "Total Cost": 43.6,
+                "Plan Rows": 10,
+                "Plan Width": 21,
+                "Actual Startup Time": 0.013,
+                "Actual Total Time": 0.013,
+                "Actual Rows": 5,
+                "Actual Loops": 1,
+                "Recheck Cond": "(((assigned_to_id)::text = 'profile-000'::text) OR ((id)::text = ANY ('{p-profile-000-0,p-profile-000-1,p-profile-000-2,p-profile-000-3,p-profile-000-4}'::text[])))",
+                "Rows Removed by Index Recheck": 0,
+                "Exact Heap Blocks": 1,
+                "Lossy Heap Blocks": 0,
+                "Shared Hit Blocks": 13,
+                "Shared Read Blocks": 0,
+                "Shared Dirtied Blocks": 0,
+                "Shared Written Blocks": 0,
+                "Local Hit Blocks": 0,
+                "Local Read Blocks": 0,
+                "Local Dirtied Blocks": 0,
+                "Local Written Blocks": 0,
+                "Temp Read Blocks": 0,
+                "Temp Written Blocks": 0,
+                "Plans": [
+                  {
+                    "Node Type": "BitmapOr",
+                    "Parent Relationship": "Outer",
+                    "Parallel Aware": false,
+                    "Async Capable": false,
+                    "Startup Cost": 21.73,
+                    "Total Cost": 21.73,
+                    "Plan Rows": 10,
+                    "Plan Width": 0,
+                    "Actual Startup Time": 0.011,
+                    "Actual Total Time": 0.011,
+                    "Actual Rows": 0,
+                    "Actual Loops": 1,
+                    "Shared Hit Blocks": 12,
+                    "Shared Read Blocks": 0,
+                    "Shared Dirtied Blocks": 0,
+                    "Shared Written Blocks": 0,
+                    "Local Hit Blocks": 0,
+                    "Local Read Blocks": 0,
+                    "Local Dirtied Blocks": 0,
+                    "Local Written Blocks": 0,
+                    "Temp Read Blocks": 0,
+                    "Temp Written Blocks": 0,
+                    "Plans": [
+                      {
+                        "Node Type": "Bitmap Index Scan",
+                        "Parent Relationship": "Member",
+                        "Parallel Aware": false,
+                        "Async Capable": false,
+                        "Index Name": "ix_tasks_assignee_status_updated",
+                        "Startup Cost": 0.0,
+                        "Total Cost": 4.31,
+                        "Plan Rows": 5,
+                        "Plan Width": 0,
+                        "Actual Startup Time": 0.004,
+                        "Actual Total Time": 0.004,
+                        "Actual Rows": 5,
+                        "Actual Loops": 1,
+                        "Index Cond": "((assigned_to_id)::text = 'profile-000'::text)",
+                        "Shared Hit Blocks": 2,
+                        "Shared Read Blocks": 0,
+                        "Shared Dirtied Blocks": 0,
+                        "Shared Written Blocks": 0,
+                        "Local Hit Blocks": 0,
+                        "Local Read Blocks": 0,
+                        "Local Dirtied Blocks": 0,
+                        "Local Written Blocks": 0,
+                        "Temp Read Blocks": 0,
+                        "Temp Written Blocks": 0
+                      },
+                      {
+                        "Node Type": "Bitmap Index Scan",
+                        "Parent Relationship": "Member",
+                        "Parallel Aware": false,
+                        "Async Capable": false,
+                        "Index Name": "tasks_pkey",
+                        "Startup Cost": 0.0,
+                        "Total Cost": 17.41,
+                        "Plan Rows": 5,
+                        "Plan Width": 0,
+                        "Actual Startup Time": 0.006,
+                        "Actual Total Time": 0.006,
+                        "Actual Rows": 5,
+                        "Actual Loops": 1,
+                        "Index Cond": "((id)::text = ANY ('{p-profile-000-0,p-profile-000-1,p-profile-000-2,p-profile-000-3,p-profile-000-4}'::text[]))",
+                        "Shared Hit Blocks": 10,
+                        "Shared Read Blocks": 0,
+                        "Shared Dirtied Blocks": 0,
+                        "Shared Written Blocks": 0,
+                        "Local Hit Blocks": 0,
+                        "Local Read Blocks": 0,
+                        "Local Dirtied Blocks": 0,
+                        "Local Written Blocks": 0,
+                        "Temp Read Blocks": 0,
+                        "Temp Written Blocks": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "Node Type": "Memoize",
+                "Parent Relationship": "Inner",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Startup Cost": 0.15,
+                "Total Cost": 2.98,
+                "Plan Rows": 1,
+                "Plan Width": 11,
+                "Actual Startup Time": 0.002,
+                "Actual Total Time": 0.002,
+                "Actual Rows": 1,
+                "Actual Loops": 5,
+                "Cache Key": "tasks.created_by_id",
+                "Cache Mode": "logical",
+                "Cache Hits": 4,
+                "Cache Misses": 1,
+                "Cache Evictions": 0,
+                "Cache Overflows": 0,
+                "Peak Memory Usage": 1,
+                "Shared Hit Blocks": 2,
+                "Shared Read Blocks": 0,
+                "Shared Dirtied Blocks": 0,
+                "Shared Written Blocks": 0,
+                "Local Hit Blocks": 0,
+                "Local Read Blocks": 0,
+                "Local Dirtied Blocks": 0,
+                "Local Written Blocks": 0,
+                "Temp Read Blocks": 0,
+                "Temp Written Blocks": 0,
+                "Plans": [
+                  {
+                    "Node Type": "Index Scan",
+                    "Parent Relationship": "Outer",
+                    "Parallel Aware": false,
+                    "Async Capable": false,
+                    "Scan Direction": "Forward",
+                    "Index Name": "users_pkey",
+                    "Relation Name": "users",
+                    "Alias": "users",
+                    "Startup Cost": 0.14,
+                    "Total Cost": 2.97,
+                    "Plan Rows": 1,
+                    "Plan Width": 11,
+                    "Actual Startup Time": 0.007,
+                    "Actual Total Time": 0.007,
+                    "Actual Rows": 1,
+                    "Actual Loops": 1,
+                    "Index Cond": "((id)::text = (tasks.created_by_id)::text)",
+                    "Rows Removed by Index Recheck": 0,
+                    "Filter": "(tenant_id = 'cd4b90bc-e6ef-4a0e-8e93-409cb6f8fac9'::uuid)",
+                    "Rows Removed by Filter": 0,
+                    "Shared Hit Blocks": 2,
+                    "Shared Read Blocks": 0,
+                    "Shared Dirtied Blocks": 0,
+                    "Shared Written Blocks": 0,
+                    "Local Hit Blocks": 0,
+                    "Local Read Blocks": 0,
+                    "Local Dirtied Blocks": 0,
+                    "Local Written Blocks": 0,
+                    "Temp Read Blocks": 0,
+                    "Temp Written Blocks": 0
+                  }
+                ]
+              }
+            ]
+          },
+          "Planning": {
+            "Shared Hit Blocks": 84,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0
+          },
+          "Planning Time": 0.597,
+          "Triggers": [],
+          "Execution Time": 0.102
+        }
+      ]
+    }
+  },
+  {
+    "run": "pg-final-regression",
+    "test": "test_notification_lookup_indexes",
+    "property": "notification_query_plans",
+    "value": {
+      "inbox": [
+        "('Limit  (cost=0.28..4913.22 rows=100 width=17)',)",
+        "('  ->  Index Scan Backward using ix_notification_inbox on notifications  (cost=0.28..122872.78 rows=2501 width=17)',)",
+        "(\"        Index Cond: ((user_id)::text = 'owner'::text)\",)",
+        "(\"        Filter: (((tenant_id IS NULL) OR (tenant_id = '49c8467e-809c-43c7-a042-929abd5d9cfc'::uuid)) AND ((alert_kind IS NULL) OR ((alert_kind)::text ... (23 characters truncated) ... vertime,estimated_overload}'::text[])) OR (related_task_id IS NOT NULL) OR (hashed SubPlan 4)) AND ((related_task_id IS NULL) OR (hashed SubPlan 2)))\",)",
+        "('        SubPlan 4',)",
+        "('          ->  Index Scan using ix_users_tenant_id on users users_1  (cost=0.14..8.15 rows=1 width=32)',)",
+        "(\"                Index Cond: (tenant_id = '49c8467e-809c-43c7-a042-929abd5d9cfc'::uuid)\",)",
+        "(\"                Filter: (status = 'ACTIVE'::userstatusenum)\",)",
+        "('        SubPlan 2',)",
+        "('          ->  Nested Loop  (cost=0.28..16.32 rows=4 width=32)',)",
+        "('                ->  Index Scan using ix_users_tenant_id on users  (cost=0.14..8.15 rows=1 width=90)',)",
+        "(\"                      Index Cond: (tenant_id = '49c8467e-809c-43c7-a042-929abd5d9cfc'::uuid)\",)",
+        "('                ->  Index Scan using ix_tasks_creator_status on tasks  (cost=0.14..8.16 rows=1 width=180)',)",
+        "('                      Index Cond: ((created_by_id)::text = (users.id)::text)',)"
+      ],
+      "delivery": [
+        "('Limit  (cost=17.41..17.42 rows=6 width=17)',)",
+        "('  ->  Sort  (cost=17.41..17.42 rows=6 width=17)',)",
+        "('        Sort Key: created_at, id',)",
+        "('        ->  Index Scan using ix_notification_delivery on notifications  (cost=0.28..17.33 rows=6 width=17)',)",
+        "('              Index Cond: (delivery_pending = true)',)",
+        "('              Filter: ((next_delivery_at IS NULL) OR (next_delivery_at <= CURRENT_TIMESTAMP))',)"
+      ]
+    }
+  },
+  {
+    "run": "pg-final-regression",
+    "test": "test_profile_two_hundred_employees_bounded_scans",
+    "property": "notification_scan_profile",
+    "value": {
+      "employees": 200,
+      "batch_size": 100,
+      "batches": 3,
+      "seconds": 3.14,
+      "sql_statements": 2339
+    }
+  },
+  {
+    "run": "pg-final-regression",
+    "test": "test_batched_fanout_keeps_one_row_per_authorized_recipient",
+    "property": "recipient_batch",
+    "value": {
+      "recipients": 207,
+      "replays": 2,
+      "insert_statements": 6
+    }
+  },
+  {
+    "run": "pg-final-regression",
+    "test": "test_pending_chronology_index_under_a_large_ready_backlog",
+    "property": "large_ready_backlog_query_plan",
+    "value": "Limit  (cost=0.28..11.90 rows=100 width=22)\n  ->  Index Scan using ix_notification_pending_chronology on notifications  (cost=0.28..291.51 rows=2506 width=22)\n        Filter: ((next_delivery_at IS NULL) OR (next_delivery_at <= CURRENT_TIMESTAMP))"
+  },
+  {
+    "run": "pg-final-regression",
+    "test": "test_activity_history_pagination_query_count_and_memory[100]",
+    "property": "history_profile",
+    "value": {
+      "rows": 100,
+      "page_size": 25,
+      "queries": 10,
+      "writes": 0,
+      "seconds": 0.1659,
+      "python_peak_bytes": 830831,
+      "dialect": "postgresql"
+    }
+  },
+  {
+    "run": "pg-final-regression",
+    "test": "test_activity_history_pagination_query_count_and_memory[5000]",
+    "property": "history_profile",
+    "value": {
+      "rows": 5000,
+      "page_size": 25,
+      "queries": 10,
+      "writes": 0,
+      "seconds": 0.1574,
+      "python_peak_bytes": 830856,
+      "dialect": "postgresql"
+    }
+  },
+  {
+    "run": "pg-final-regression",
+    "test": "test_sanitized_full_schema_migration_preserves_data_and_explains_indexes",
+    "property": "legacy_fingerprints",
+    "value": {
+      "audit_events": "63673dc68ec01ad24746813781fad371455326a0e279328a5971ca64f6306e69",
+      "reward_claims": "d0f9de4e1aaaa02e2281ccf42ee988654a1ad9b0d8ebd5f3f6ea13cd80d75554",
+      "rewards": "33daf42d18c39366664339c8646c7d8f155eb8a0f6de50b2c54f3b594199ee01",
+      "subtasks": "f51449af58617b133d42a4cb37318d26ee64acb9761c9b2cc4839c505a09c264",
+      "tasks": "03aa4425ad0c34451735b05bc220f27f40a52a83a9f7dfa9efe36f3a261bceec",
+      "users": "5ef08d3423c29c873b8b26b2d1982f80334dc72e52400a34f0e5c392d42c01c8",
+      "xp_ledger": "8bb586599818e6f47529356b2bd9dd6777e61dfc9b2ae9bc1919ff7c253898b5"
+    }
+  },
+  {
+    "run": "pg-final-regression",
+    "test": "test_sanitized_full_schema_migration_preserves_data_and_explains_indexes",
+    "property": "fixture_counts",
+    "value": {
+      "schema_tables": 81,
+      "tenants": 4,
+      "users": 8,
+      "tasks": 1500,
+      "subtasks": 7500,
+      "legacy_events": 3000,
+      "legacy_ledger": 1500,
+      "rewards": 1,
+      "claims": 1
+    }
+  },
+  {
+    "run": "pg-final-regression",
+    "test": "test_sanitized_full_schema_migration_preserves_data_and_explains_indexes",
+    "property": "postgres_query_plans",
+    "value": {
+      "actor_guard": {
+        "execution_ms": 0.047,
+        "indexes": [
+          "ix_audit_events_actor_v2"
+        ],
+        "rows": 0
+      },
+      "event_chronology": {
+        "execution_ms": 0.119,
+        "indexes": [
+          "ix_audit_events_tenant_task_time"
+        ],
+        "rows": 50
+      },
+      "event_task_fk": {
+        "execution_ms": 0.03,
+        "indexes": [
+          "ix_audit_events_task_ref"
+        ],
+        "rows": 0
+      },
+      "ledger_idempotency": {
+        "execution_ms": 0.026,
+        "indexes": [
+          "uq_xp_ledger_tenant_idempotency"
+        ],
+        "rows": 1
+      },
+      "ledger_recipient_guard": {
+        "execution_ms": 0.023,
+        "indexes": [
+          "ix_xp_ledger_user_v2"
+        ],
+        "rows": 0
+      }
+    }
+  },
+  {
+    "run": "final-targets",
+    "test": "test_member_page_queries_remain_bounded_without_acl_cache",
+    "property": "member_page_profile",
+    "value": {
+      "rows": 250,
+      "page": 25,
+      "queries": 10,
+      "seconds": 0.17157359999691835
+    }
+  },
+  {
+    "run": "final-targets",
+    "test": "test_all_v2_upgrades_repeat_without_rewriting_history",
+    "property": "migration_rehearsal",
+    "value": {
+      "upgrades": 2,
+      "legacy_subtasks": 500,
+      "legacy_rewards": 100,
+      "original_tables_unchanged": 81
+    }
+  },
+  {
+    "run": "sqlite-cache-realtime-final",
+    "test": "test_member_page_queries_remain_bounded_without_acl_cache",
+    "property": "member_page_profile",
+    "value": {
+      "rows": 250,
+      "page": 25,
+      "queries": 10,
+      "seconds": 0.16502400000172202
+    }
+  },
+  {
+    "run": "sqlite-cache-realtime-final",
+    "test": "test_real_redis_disconnect_resubscribe_burst_and_listener_restart",
+    "property": "redis_recovery",
+    "value": {
+      "events": 100,
+      "subscriptions": 4,
+      "active": 0,
+      "max_active": 1,
+      "listener_restarted": true
+    }
+  },
+  {
+    "run": "api-contract-final",
+    "test": "test_authenticated_workflow_rewards_information_notifications_and_legacy",
+    "property": "accounting",
+    "value": {
+      "additional_components": {
+        "BASE": 60,
+        "BONUS": 15,
+        "PENALTY": -15
+      },
+      "after_reopen_and_reassignment": {
+        "worker": 0,
+        "watcher": 15
+      }
+    }
+  }
+]

@@ -1,0 +1,333 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="4" failures="0" skipped="0" tests="4" time="5.618" timestamp="2026-11-02T17:47:47.471450+05:30" hostname="DESKTOP-3QGSJ16"><testcase classname="" name="backend.tests.test_generate_token" time="0.000"><error message="collection failure">..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+E   sqlite3.OperationalError: no such function: to_tsvector
+
+The above exception was the direct cause of the following exception:
+backend\tests\test_generate_token.py:24: in &lt;module&gt;
+    Base.metadata.create_all(bind=engine)
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\schema.py:5929: in create_all
+    bind._run_ddl_visitor(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:3270: in _run_ddl_visitor
+    conn._run_ddl_visitor(visitorcallable, element, **kwargs)
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:2469: in _run_ddl_visitor
+    ).traverse_single(element)
+      ^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\visitors.py:661: in traverse_single
+    return meth(obj, **kw)
+           ^^^^^^^^^^^^^^^
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\ddl.py:985: in visit_metadata
+    self.traverse_single(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\visitors.py:661: in traverse_single
+    return meth(obj, **kw)
+           ^^^^^^^^^^^^^^^
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\ddl.py:1023: in visit_table
+    )._invoke_with(self.connection)
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\ddl.py:322: in _invoke_with
+    return bind.execute(self)
+           ^^^^^^^^^^^^^^^^^^
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\ddl.py:188: in _execute_on_connection
+    return connection._execute_ddl(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:1532: in _execute_ddl
+    ret = self._execute_context(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+E   sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) no such function: to_tsvector
+E   [SQL: 
+E   CREATE TABLE tasks (
+E   	id VARCHAR(36) NOT NULL, 
+E   	title VARCHAR(255) NOT NULL, 
+E   	description TEXT NOT NULL, 
+E   	status VARCHAR(23) NOT NULL, 
+E   	priority VARCHAR(6) NOT NULL, 
+E   	team VARCHAR(255) NOT NULL, 
+E   	task_group_id VARCHAR(36) NOT NULL, 
+E   	ticket_id UUID, 
+E   	assigned_to_id VARCHAR(36), 
+E   	created_by_id VARCHAR(36) NOT NULL, 
+E   	approval_required BOOLEAN NOT NULL, 
+E   	approval_status VARCHAR(8) NOT NULL, 
+E   	approver_id VARCHAR(36), 
+E   	created_at DATETIME NOT NULL, 
+E   	updated_at DATETIME NOT NULL, 
+E   	due_at DATETIME, 
+E   	assigned_at DATETIME, 
+E   	completed_at DATETIME, 
+E   	recurrence_rule VARCHAR(16) NOT NULL, 
+E   	recurring_task_id VARCHAR(36), 
+E   	clarity_rating INTEGER, 
+E   	attachments JSON NOT NULL, 
+E   	estimated_hours FLOAT, 
+E   	tags JSON NOT NULL, 
+E   	search_vector TEXT GENERATED ALWAYS AS (to_tsvector('english', coalesce(title,'') || ' ' || coalesce(description,''))) STORED, 
+E   	PRIMARY KEY (id), 
+E   	FOREIGN KEY(ticket_id) REFERENCES tickets (id) ON DELETE SET NULL, 
+E   	FOREIGN KEY(assigned_to_id) REFERENCES users (id) ON DELETE SET NULL, 
+E   	FOREIGN KEY(created_by_id) REFERENCES users (id) ON DELETE CASCADE, 
+E   	FOREIGN KEY(approver_id) REFERENCES users (id) ON DELETE SET NULL, 
+E   	FOREIGN KEY(recurring_task_id) REFERENCES tasks (id) ON DELETE SET NULL
+E   )
+E   
+E   ]
+E   (Background on this error at: https://sqlalche.me/e/20/e3q8)</error></testcase><testcase classname="" name="backend.tests.test_oauth2_server" time="0.000"><error message="collection failure">..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+E   sqlite3.OperationalError: no such function: to_tsvector
+
+The above exception was the direct cause of the following exception:
+backend\tests\test_oauth2_server.py:18: in &lt;module&gt;
+    Base.metadata.create_all(bind=engine)
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\schema.py:5929: in create_all
+    bind._run_ddl_visitor(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:3270: in _run_ddl_visitor
+    conn._run_ddl_visitor(visitorcallable, element, **kwargs)
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:2469: in _run_ddl_visitor
+    ).traverse_single(element)
+      ^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\visitors.py:661: in traverse_single
+    return meth(obj, **kw)
+           ^^^^^^^^^^^^^^^
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\ddl.py:985: in visit_metadata
+    self.traverse_single(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\visitors.py:661: in traverse_single
+    return meth(obj, **kw)
+           ^^^^^^^^^^^^^^^
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\ddl.py:1023: in visit_table
+    )._invoke_with(self.connection)
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\ddl.py:322: in _invoke_with
+    return bind.execute(self)
+           ^^^^^^^^^^^^^^^^^^
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\ddl.py:188: in _execute_on_connection
+    return connection._execute_ddl(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:1532: in _execute_ddl
+    ret = self._execute_context(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+E   sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) no such function: to_tsvector
+E   [SQL: 
+E   CREATE TABLE tasks (
+E   	id VARCHAR(36) NOT NULL, 
+E   	title VARCHAR(255) NOT NULL, 
+E   	description TEXT NOT NULL, 
+E   	status VARCHAR(23) NOT NULL, 
+E   	priority VARCHAR(6) NOT NULL, 
+E   	team VARCHAR(255) NOT NULL, 
+E   	task_group_id VARCHAR(36) NOT NULL, 
+E   	ticket_id UUID, 
+E   	assigned_to_id VARCHAR(36), 
+E   	created_by_id VARCHAR(36) NOT NULL, 
+E   	approval_required BOOLEAN NOT NULL, 
+E   	approval_status VARCHAR(8) NOT NULL, 
+E   	approver_id VARCHAR(36), 
+E   	created_at DATETIME NOT NULL, 
+E   	updated_at DATETIME NOT NULL, 
+E   	due_at DATETIME, 
+E   	assigned_at DATETIME, 
+E   	completed_at DATETIME, 
+E   	recurrence_rule VARCHAR(16) NOT NULL, 
+E   	recurring_task_id VARCHAR(36), 
+E   	clarity_rating INTEGER, 
+E   	attachments JSON NOT NULL, 
+E   	estimated_hours FLOAT, 
+E   	tags JSON NOT NULL, 
+E   	search_vector TEXT GENERATED ALWAYS AS (to_tsvector('english', coalesce(title,'') || ' ' || coalesce(description,''))) STORED, 
+E   	PRIMARY KEY (id), 
+E   	FOREIGN KEY(ticket_id) REFERENCES tickets (id) ON DELETE SET NULL, 
+E   	FOREIGN KEY(assigned_to_id) REFERENCES users (id) ON DELETE SET NULL, 
+E   	FOREIGN KEY(created_by_id) REFERENCES users (id) ON DELETE CASCADE, 
+E   	FOREIGN KEY(approver_id) REFERENCES users (id) ON DELETE SET NULL, 
+E   	FOREIGN KEY(recurring_task_id) REFERENCES tasks (id) ON DELETE SET NULL
+E   )
+E   
+E   ]
+E   (Background on this error at: https://sqlalche.me/e/20/e3q8)</error></testcase><testcase classname="" name="backend.tests.test_task_list" time="0.000"><error message="collection failure">..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+E   sqlite3.OperationalError: no such function: to_tsvector
+
+The above exception was the direct cause of the following exception:
+backend\tests\test_task_list.py:27: in &lt;module&gt;
+    Base.metadata.create_all(bind=engine)
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\schema.py:5929: in create_all
+    bind._run_ddl_visitor(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:3270: in _run_ddl_visitor
+    conn._run_ddl_visitor(visitorcallable, element, **kwargs)
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:2469: in _run_ddl_visitor
+    ).traverse_single(element)
+      ^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\visitors.py:661: in traverse_single
+    return meth(obj, **kw)
+           ^^^^^^^^^^^^^^^
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\ddl.py:985: in visit_metadata
+    self.traverse_single(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\visitors.py:661: in traverse_single
+    return meth(obj, **kw)
+           ^^^^^^^^^^^^^^^
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\ddl.py:1023: in visit_table
+    )._invoke_with(self.connection)
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\ddl.py:322: in _invoke_with
+    return bind.execute(self)
+           ^^^^^^^^^^^^^^^^^^
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\ddl.py:188: in _execute_on_connection
+    return connection._execute_ddl(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:1532: in _execute_ddl
+    ret = self._execute_context(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+E   sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) no such function: to_tsvector
+E   [SQL: 
+E   CREATE TABLE tasks (
+E   	id VARCHAR(36) NOT NULL, 
+E   	title VARCHAR(255) NOT NULL, 
+E   	description TEXT NOT NULL, 
+E   	status VARCHAR(23) NOT NULL, 
+E   	priority VARCHAR(6) NOT NULL, 
+E   	team VARCHAR(255) NOT NULL, 
+E   	task_group_id VARCHAR(36) NOT NULL, 
+E   	ticket_id UUID, 
+E   	assigned_to_id VARCHAR(36), 
+E   	created_by_id VARCHAR(36) NOT NULL, 
+E   	approval_required BOOLEAN NOT NULL, 
+E   	approval_status VARCHAR(8) NOT NULL, 
+E   	approver_id VARCHAR(36), 
+E   	created_at DATETIME NOT NULL, 
+E   	updated_at DATETIME NOT NULL, 
+E   	due_at DATETIME, 
+E   	assigned_at DATETIME, 
+E   	completed_at DATETIME, 
+E   	recurrence_rule VARCHAR(16) NOT NULL, 
+E   	recurring_task_id VARCHAR(36), 
+E   	clarity_rating INTEGER, 
+E   	attachments JSON NOT NULL, 
+E   	estimated_hours FLOAT, 
+E   	tags JSON NOT NULL, 
+E   	search_vector TEXT GENERATED ALWAYS AS (to_tsvector('english', coalesce(title,'') || ' ' || coalesce(description,''))) STORED, 
+E   	PRIMARY KEY (id), 
+E   	FOREIGN KEY(ticket_id) REFERENCES tickets (id) ON DELETE SET NULL, 
+E   	FOREIGN KEY(assigned_to_id) REFERENCES users (id) ON DELETE SET NULL, 
+E   	FOREIGN KEY(created_by_id) REFERENCES users (id) ON DELETE CASCADE, 
+E   	FOREIGN KEY(approver_id) REFERENCES users (id) ON DELETE SET NULL, 
+E   	FOREIGN KEY(recurring_task_id) REFERENCES tasks (id) ON DELETE SET NULL
+E   )
+E   
+E   ]
+E   (Background on this error at: https://sqlalche.me/e/20/e3q8)</error></testcase><testcase classname="" name="backend.tests.test_ticket_tenant_permissions" time="0.000"><error message="collection failure">..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+E   sqlite3.OperationalError: no such function: to_tsvector
+
+The above exception was the direct cause of the following exception:
+backend\tests\test_ticket_tenant_permissions.py:34: in &lt;module&gt;
+    Base.metadata.create_all(bind=engine)
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\schema.py:5929: in create_all
+    bind._run_ddl_visitor(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:3270: in _run_ddl_visitor
+    conn._run_ddl_visitor(visitorcallable, element, **kwargs)
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:2469: in _run_ddl_visitor
+    ).traverse_single(element)
+      ^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\visitors.py:661: in traverse_single
+    return meth(obj, **kw)
+           ^^^^^^^^^^^^^^^
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\ddl.py:985: in visit_metadata
+    self.traverse_single(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\visitors.py:661: in traverse_single
+    return meth(obj, **kw)
+           ^^^^^^^^^^^^^^^
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\ddl.py:1023: in visit_table
+    )._invoke_with(self.connection)
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\ddl.py:322: in _invoke_with
+    return bind.execute(self)
+           ^^^^^^^^^^^^^^^^^^
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:1421: in execute
+    return meth(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\ddl.py:188: in _execute_on_connection
+    return connection._execute_ddl(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:1532: in _execute_ddl
+    ret = self._execute_context(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:1848: in _execute_context
+    return self._exec_single_context(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+..\..\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+E   sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) no such function: to_tsvector
+E   [SQL: 
+E   CREATE TABLE tasks (
+E   	id VARCHAR(36) NOT NULL, 
+E   	title VARCHAR(255) NOT NULL, 
+E   	description TEXT NOT NULL, 
+E   	status VARCHAR(23) NOT NULL, 
+E   	priority VARCHAR(6) NOT NULL, 
+E   	team VARCHAR(255) NOT NULL, 
+E   	task_group_id VARCHAR(36) NOT NULL, 
+E   	ticket_id UUID, 
+E   	assigned_to_id VARCHAR(36), 
+E   	created_by_id VARCHAR(36) NOT NULL, 
+E   	approval_required BOOLEAN NOT NULL, 
+E   	approval_status VARCHAR(8) NOT NULL, 
+E   	approver_id VARCHAR(36), 
+E   	created_at DATETIME NOT NULL, 
+E   	updated_at DATETIME NOT NULL, 
+E   	due_at DATETIME, 
+E   	assigned_at DATETIME, 
+E   	completed_at DATETIME, 
+E   	recurrence_rule VARCHAR(16) NOT NULL, 
+E   	recurring_task_id VARCHAR(36), 
+E   	clarity_rating INTEGER, 
+E   	attachments JSON NOT NULL, 
+E   	estimated_hours FLOAT, 
+E   	tags JSON NOT NULL, 
+E   	search_vector TEXT GENERATED ALWAYS AS (to_tsvector('english', coalesce(title,'') || ' ' || coalesce(description,''))) STORED, 
+E   	PRIMARY KEY (id), 
+E   	FOREIGN KEY(ticket_id) REFERENCES tickets (id) ON DELETE SET NULL, 
+E   	FOREIGN KEY(assigned_to_id) REFERENCES users (id) ON DELETE SET NULL, 
+E   	FOREIGN KEY(created_by_id) REFERENCES users (id) ON DELETE CASCADE, 
+E   	FOREIGN KEY(approver_id) REFERENCES users (id) ON DELETE SET NULL, 
+E   	FOREIGN KEY(recurring_task_id) REFERENCES tasks (id) ON DELETE SET NULL
+E   )
+E   
+E   ]
+E   (Background on this error at: https://sqlalche.me/e/20/e3q8)</error></testcase></testsuite></testsuites>

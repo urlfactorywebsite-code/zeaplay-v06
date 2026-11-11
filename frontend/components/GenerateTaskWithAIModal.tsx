@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { GoogleGenAI, Type } from '@google/genai';
+import { Type } from '@google/genai';
 import { TaskPriority } from '../types';
-import { withGeminiKey } from '../utils/geminiClient';
+import { withAiClient } from '../utils/geminiClient';
 import { SparklesIcon } from './icons';
 
 interface GenerateTaskWithAIModalProps {
@@ -85,8 +85,7 @@ const GenerateTaskWithAIModal: React.FC<GenerateTaskWithAIModalProps> = ({ isOpe
         setError('');
 
         try {
-            const response = await withGeminiKey(async (apiKey) => {
-                const ai = new GoogleGenAI({ apiKey });
+            const response = await withAiClient(async (ai) => {
                 const responseSchema = {
                     type: Type.OBJECT,
                     properties: {
@@ -135,8 +134,7 @@ const GenerateTaskWithAIModal: React.FC<GenerateTaskWithAIModalProps> = ({ isOpe
         setError('');
 
         try {
-            const response = await withGeminiKey(async (apiKey) => {
-                const ai = new GoogleGenAI({ apiKey });
+            const response = await withAiClient(async (ai) => {
                 const responseSchema = {
                     type: Type.OBJECT,
                     properties: {

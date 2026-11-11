@@ -5,6 +5,9 @@ import api from '../services/mockApi';
 import { NotificationModule, NotificationPreference, Role } from '../types';
 import { useAuth } from '../hooks/useAuth';
 import { usePushNotifications } from '../hooks/usePushNotifications';
+import WorkloadAlertSettings from './WorkloadAlertSettings';
+import { notifyNotificationsChanged } from '../utils/notificationAlerts';
+import { notifyActivityChanged } from '../utils/taskActivity';
 
 type StatusMessage = {
   type: 'success' | 'error';
@@ -124,6 +127,7 @@ const SettingsNotificationsPanel: React.FC = () => {
   }, []);
 
   const normalizedPreferences = useMemo(() => normalizePreferences(preferences), [preferences]);
+  const workloadPreference = normalizedPreferences.find(p => p.module === 'tasks');
 
   const permissionLabel = useMemo(() => {
     if (!supported) return 'Unsupported';
@@ -318,6 +322,12 @@ const SettingsNotificationsPanel: React.FC = () => {
           )}
         </div>
       </div>
+      {!loading && workloadPreference && <WorkloadAlertSettings preference={workloadPreference} onSave={async value => {
+        const updated = await api.updateNotificationPreferences([value]);
+        setPreferences(updated);
+        notifyNotificationsChanged(); notifyActivityChanged(user?.id);
+        setStatus({ type: 'success', message: 'Workload preferences updated.' });
+      }} />}
     </div>
   );
 };

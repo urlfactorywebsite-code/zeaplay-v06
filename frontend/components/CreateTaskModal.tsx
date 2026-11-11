@@ -1,15 +1,17 @@
+import Avatar from './Avatar';
+import { plannedDatesError } from '../utils/subtaskWorkflow';
+import { taskWallTimeToUtc } from '../utils/taskCalendarDates';
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { DayPicker } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
 import api from '../services/mockApi';
-import { TaskPriority, User, UserStatus, RecurrenceRule, KanbanColumn, TaskStatus, Subtask, CUSTOM_STATUS_NAMES } from '../types';
+import { TaskPriority, User, UserStatus, RecurrenceRule, KanbanColumn, TaskStatus, Subtask, CUSTOM_STATUS_NAMES, Role } from '../types';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
 import { formatRecurrenceRule, formatTaskStatus } from '../utils';
 import { PlusIcon, XMarkIcon, SparklesIcon } from './icons';
 import GenerateTaskWithAIModal from './GenerateTaskWithAIModal';
 import SingleSelect from './ui/SingleSelect';
-import { getUserAvatarUrl } from '../utils/userAvatar';
 
 type ThemeMode = 'dark' | 'colorful' | 'light';
 
@@ -161,6 +163,7 @@ interface CreateTaskModalProps {
   onClose: () => void;
   onTaskCreated: () => void;
   initialDueDate?: string | null;
+  timeZone?: string;
   ticketId?: string;
   ticketTitle?: string;
   ticketDescription?: string;
@@ -171,6 +174,7 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
     onClose,
     onTaskCreated,
     initialDueDate = null,
+    timeZone,
     ticketId,
     ticketTitle,
     ticketDescription,
@@ -195,6 +199,9 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
     // Enhancements
     const [subtasks, setSubtasks] = useState<string[]>([]);
     const [currentSubtask, setCurrentSubtask] = useState('');
+    const [currentSubtaskStart, setCurrentSubtaskStart] = useState('');
+    const [currentSubtaskEnd, setCurrentSubtaskEnd] = useState('');
+    const [subtaskPlans, setSubtaskPlans] = useState<Array<{ start: string; end: string }>>([]);
     const [attachments, setAttachments] = useState<string[]>([]);
     const [currentAttachment, setCurrentAttachment] = useState('');
     const [attachmentProgress, setAttachmentProgress] = useState<Record<string, number>>({});
@@ -212,7 +219,6 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
     });
     const [tags, setTags] = useState<string[]>([]);
     const [currentTag, setCurrentTag] = useState('');
-    const [completedSubtaskIndexes, setCompletedSubtaskIndexes] = useState<Set<number>>(new Set());
 
     const [users, setUsers] = useState<User[]>(() => (
         currentUser ? [currentUser] : []
@@ -220,6 +226,7 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
     const [columns, setColumns] = useState<KanbanColumn[]>([]);
     const [isAssigneesLoading, setIsAssigneesLoading] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const submissionPending = useRef(false);
     const [error, setError] = useState('');
     const [isAiModalOpen, setIsAiModalOpen] = useState(false);
     const [themeMode, setThemeMode] = useState<ThemeMode>('dark');
@@ -399,8 +406,8 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
         // Initialize dueDate and dueTime from initialDueDate if provided
         if (initialDueDate) {
             const date = new Date(initialDueDate);
-            setDueDate(formatDateInput(date));
-            setDueTime(date.toTimeString().slice(0, 5));
+            setDueDate(initialDueDate.length === 10 ? initialDueDate : formatDateInput(date));
+            setDueTime(initialDueDate.length === 10 ? '00:00' : date.toTimeString().slice(0, 5));
         } else {
             const defaults = resolveDefaultDueDateTime(new Date());
             setDueDate(defaults.date);
@@ -410,7 +417,9 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
         setIsSubmitting(false);
         if (currentUser) setTeam(currentUser.department);
         setSubtasks([]);
-        setCompletedSubtaskIndexes(new Set());
+        setSubtaskPlans([]);
+        setCurrentSubtaskStart('');
+        setCurrentSubtaskEnd('');
         setCurrentSubtask('');
         setAttachments([]);
         setCurrentAttachment('');
@@ -436,31 +445,18 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
 
     const handleAddSubtask = () => {
         if (currentSubtask.trim()) {
+            const message = plannedDatesError(currentSubtaskStart, currentSubtaskEnd);
+            if (message) { notify(message); return; }
             setSubtasks([...subtasks, currentSubtask.trim()]);
+            setSubtaskPlans([...subtaskPlans, { start:currentSubtaskStart, end:currentSubtaskEnd }]);
             setCurrentSubtask('');
+            setCurrentSubtaskStart('');
+            setCurrentSubtaskEnd('');
         }
-    };
-    const handleToggleSubtask = (index: number) => {
-        setCompletedSubtaskIndexes((current) => {
-            const next = new Set(current);
-            if (next.has(index)) {
-                next.delete(index);
-            } else {
-                next.add(index);
-            }
-            return next;
-        });
     };
     const handleRemoveSubtask = (index: number) => {
         setSubtasks(subtasks.filter((_, i) => i !== index));
-        setCompletedSubtaskIndexes((current) => {
-            const next = new Set<number>();
-            current.forEach((item) => {
-                if (item < index) next.add(item);
-                if (item > index) next.add(item - 1);
-            });
-            return next;
-        });
+        setSubtaskPlans(subtaskPlans.filter((_, i) => i !== index));
     };
 
     const handleAddAttachment = () => {
@@ -498,6 +494,7 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (submissionPending.current) return;
         if (!currentUser) {
             setError('You must be logged in to create a task.');
             return;
@@ -506,6 +503,7 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
             setError('Due date and due time are required.');
             return;
         }
+        submissionPending.current = true;
         setIsSubmitting(true);
         setError('');
         try {
@@ -531,10 +529,14 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
             notify('Task added to ticket.');
             return;
         }
+            const invalidPlan = subtasks.map((_, index) => plannedDatesError(subtaskPlans[index]?.start, subtaskPlans[index]?.end)).find(Boolean);
+            if (invalidPlan) throw new Error(invalidPlan);
             const finalSubtasks: Subtask[] = subtasks.map((title, index) => ({
                 id: `sub-${Date.now()}-${Math.random()}`,
                 title,
-                completed: completedSubtaskIndexes.has(index),
+                completed: false,
+                plannedStartDate: subtaskPlans[index].start,
+                plannedEndDate: subtaskPlans[index].end,
             }));
 
             const estimatedHoursValue =
@@ -545,7 +547,7 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
                 description,
                 priority,
                 status: status as TaskStatus,
-                dueAt: (dueDate && dueTime) ? `${dueDate}T${dueTime}:00` : dueDate ? `${dueDate}T00:00:00` : null,
+                dueAt: timeZone ? taskWallTimeToUtc(`${dueDate}T${dueTime || '00:00'}`, timeZone) : (dueDate && dueTime) ? `${dueDate}T${dueTime}:00` : dueDate ? `${dueDate}T00:00:00` : null,
                 team,
                 recurringTaskId: null,
                 subtasks: finalSubtasks,
@@ -579,6 +581,7 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
         } catch (err: any) {
             setError(err.message || 'Failed to create task. Please try again.');
         } finally {
+            submissionPending.current = false;
             setIsSubmitting(false);
         }
     };
@@ -590,6 +593,7 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
         setPriority(nextPriority);
         if (data.subtasks !== undefined) {
             setSubtasks(data.subtasks.filter((item) => item.trim().length > 0));
+            setSubtaskPlans(data.subtasks.filter((item) => item.trim().length > 0).map(() => ({ start:'', end:'' })));
         }
     };
 
@@ -951,15 +955,10 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
                                                             </span>
                                                         ) : (
                                                             selectedUsers.slice(0, 3).map((member) => {
-                                                                const avatar = getUserAvatarUrl(member);
                                                                 return (
                                                                     <span key={member.id} className="modal-chip inline-flex max-w-full items-center gap-2 px-2 py-1 text-xs">
                                                                         <span className="h-5 w-5 overflow-hidden rounded-full bg-black/40">
-                                                                            {avatar ? (
-                                                                                <img src={avatar} alt={member.name} className="h-full w-full object-cover" />
-                                                                            ) : (
-                                                                                <span className="flex h-full w-full items-center justify-center text-[9px] uppercase">{member.name.slice(0, 2)}</span>
-                                                                            )}
+                                                                            <Avatar user={member} className="h-full w-full" />
                                                                         </span>
                                                                         <span className="truncate">{member.name}</span>
                                                                     </span>
@@ -996,7 +995,6 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
                                                             ) : (
                                                                 filteredAssignees.map((member, index) => {
                                                                     const isSelected = assignedTo.includes(member.id);
-                                                                    const avatar = getUserAvatarUrl(member);
                                                                     const isOnline = member.status === UserStatus.ACTIVE;
                                                                     return (
                                                                         <button
@@ -1009,11 +1007,7 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
                                                                             } ${isSelected ? 'text-cyan-100' : 'text-white/80'}`}
                                                                         >
                                                                             <span className="relative h-9 w-9 shrink-0 overflow-hidden rounded-full border border-white/15 bg-black/40">
-                                                                                {avatar ? (
-                                                                                    <img src={avatar} alt={member.name} className="h-full w-full object-cover" />
-                                                                                ) : (
-                                                                                    <span className="flex h-full w-full items-center justify-center text-xs font-bold uppercase">{member.name.slice(0, 2)}</span>
-                                                                                )}
+                                                                                <Avatar user={member} className="h-full w-full" />
                                                                                 <span className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border border-slate-950 ${isOnline ? 'bg-emerald-400' : 'bg-slate-500'}`} />
                                                                             </span>
                                                                             <span className="min-w-0 flex-1">
@@ -1304,6 +1298,10 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
                                             Add
                                         </button>
                                     </div>
+                                    <div className="mt-2 grid grid-cols-2 gap-2">
+                                        <label className="text-xs">Planned start *<input type="date" aria-label="New subtask planned start" value={currentSubtaskStart} onChange={e => setCurrentSubtaskStart(e.target.value)} className={fieldClass} /></label>
+                                        <label className="text-xs">Planned end *<input type="date" aria-label="New subtask planned end" min={currentSubtaskStart || undefined} value={currentSubtaskEnd} onChange={e => setCurrentSubtaskEnd(e.target.value)} className={fieldClass} /></label>
+                                    </div>
                                     <ul className="mt-3 max-h-40 space-y-2 overflow-y-auto pr-1 text-sm custom-scrollbar">
                                         {subtasks.length === 0 ? (
                                             <li className="modal-plain-card muted">
@@ -1315,15 +1313,12 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
                                                     key={sub + '-' + index}
                                                     className="modal-plain-card flex items-center justify-between gap-3"
                                                 >
-                                                    <label className="flex min-w-0 flex-1 items-center gap-2">
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={completedSubtaskIndexes.has(index)}
-                                                            onChange={() => handleToggleSubtask(index)}
-                                                            className="h-4 w-4 rounded border-white/20 bg-black/30 text-cyan-400 focus:ring-cyan-400"
-                                                        />
-                                                        <span className={`truncate ${completedSubtaskIndexes.has(index) ? 'line-through opacity-60' : ''}`}>{sub}</span>
-                                                    </label>
+                                                    <div className="min-w-0 flex-1 space-y-2">
+                                                        <span>{sub}</span>
+                                                        <div className="grid grid-cols-2 gap-2">
+                                                            {(['start', 'end'] as const).map(field => <label key={field} className="text-xs">Planned {field} *<input type="date" required aria-label={`${sub} planned ${field}`} value={subtaskPlans[index]?.[field] || ''} min={field === 'end' ? subtaskPlans[index]?.start || undefined : undefined} onChange={e => setSubtaskPlans(current => subtasks.map((_, i) => ({ start:current[i]?.start || '', end:current[i]?.end || '', ...(i === index ? { [field]:e.target.value } : {}) })))} className={fieldClass} /></label>)}
+                                                        </div>
+                                                    </div>
                                                     <button
                                                         type="button"
                                                         onClick={() => handleRemoveSubtask(index)}
@@ -1467,7 +1462,6 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
                                                 ) : (
                                                     filteredFollowers.map((member) => {
                                                         const isSelected = followerIds.includes(member.id);
-                                                        const avatar = getUserAvatarUrl(member);
                                                         return (
                                                             <button
                                                                 key={member.id}
@@ -1480,11 +1474,7 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
                                                                 }`}
                                                             >
                                                                 <span className="h-7 w-7 shrink-0 overflow-hidden rounded-full bg-black/40">
-                                                                    {avatar ? (
-                                                                        <img src={avatar} alt={member.name} className="h-full w-full object-cover" />
-                                                                    ) : (
-                                                                        <span className="flex h-full w-full items-center justify-center text-[10px] font-bold uppercase">{member.name.slice(0, 2)}</span>
-                                                                    )}
+                                                                    <Avatar user={member} className="h-full w-full" />
                                                                 </span>
                                                                 <span className="min-w-0 flex-1">
                                                                     <span className="block truncate font-semibold">{member.name}</span>
@@ -1590,15 +1580,10 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
                                             <span className="modal-plain-card muted text-xs">No assignees yet</span>
                                         ) : (
                                             assignedUsers.map((member) => {
-                                                const memberAvatar = getUserAvatarUrl(member);
                                                 return (
                                                     <div key={member.id} className="flex items-center gap-2 rounded-full bg-white/70 px-3 py-1 text-xs font-medium text-slate-600 shadow-sm dark:bg-slate-800/70 dark:text-slate-200">
                                                         <span className="h-7 w-7 overflow-hidden rounded-full border border-slate-200 dark:border-slate-600">
-                                                            {memberAvatar ? (
-                                                                <img src={memberAvatar} alt={member.name} className="h-full w-full object-cover" />
-                                                            ) : (
-                                                                <span className="flex h-full w-full items-center justify-center text-[10px] uppercase">{member.name.slice(0, 2)}</span>
-                                                            )}
+                                                            <Avatar user={member} className="h-full w-full" />
                                                         </span>
                                                         <span>{member.name}</span>
                                                         <span className="text-[10px] uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">{formatRoleLabel(member.role)}</span>

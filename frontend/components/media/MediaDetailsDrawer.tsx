@@ -1,3 +1,4 @@
+import { Dialog, DialogPanel, DialogTitle } from '@headlessui/react';
 import React, { useEffect, useState } from 'react';
 import { XIcon, DownloadIcon } from 'lucide-react';
 import { MediaCategory, MediaItem } from '../../types';
@@ -6,7 +7,7 @@ type MediaDetailsDrawerProps = {
   item: MediaItem | null;
   open: boolean;
   onClose: () => void;
-  onDelete: (mediaId: string) => Promise<void>;
+  onDelete: (mediaId: string) => Promise<boolean>;
   onCopyUrl: (url: string) => void;
   canDelete: boolean;
 };
@@ -41,9 +42,8 @@ const MediaDetailsDrawer: React.FC<MediaDetailsDrawerProps> = ({
 
   const handleDelete = async () => {
     setDeleting(true);
-    await onDelete(item.id);
-    setDeleting(false);
-    onClose();
+    try { if (await onDelete(item.id)) onClose(); }
+    finally { setDeleting(false); }
   };
 
   const renderPreview = () => {
@@ -68,15 +68,16 @@ const MediaDetailsDrawer: React.FC<MediaDetailsDrawerProps> = ({
   const extension = item.ext || item.filename.split('.').pop()?.toLowerCase() || 'file';
 
   return (
-    <div className="fixed inset-0 z-50 flex">
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-      <div className="ml-auto flex h-full w-full max-w-xl flex-col overflow-y-auto bg-[#05050A] p-6 shadow-2xl shadow-black/70">
+    <Dialog open={open} onClose={onClose} className="fixed inset-0 z-[80]">
+      <div className="fixed inset-0 flex">
+      <div className="absolute inset-0 bg-black/60" aria-hidden="true" />
+      <DialogPanel className="relative ml-auto flex h-full w-full max-w-xl flex-col overflow-y-auto bg-[#05050A] p-6 shadow-2xl shadow-black/70">
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-xl font-semibold text-white">{item.filename}</h2>
+            <DialogTitle className="text-xl font-semibold text-white">{item.filename}</DialogTitle>
             <p className="text-sm text-slate-400">{item.contentType}</p>
           </div>
-          <button className="rounded-full bg-slate-800 p-2 text-slate-400 hover:text-white" onClick={onClose}>
+          <button type="button" aria-label="Close media details" className="rounded-full bg-slate-800 p-2 text-slate-400 hover:text-white" onClick={onClose}>
             <XIcon className="h-5 w-5" />
           </button>
         </div>
@@ -138,8 +139,9 @@ const MediaDetailsDrawer: React.FC<MediaDetailsDrawerProps> = ({
             </div>
           )}
         </div>
+      </DialogPanel>
       </div>
-    </div>
+    </Dialog>
   );
 };
 

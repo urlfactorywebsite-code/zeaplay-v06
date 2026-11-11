@@ -208,7 +208,9 @@ def create_ticket_task_handler(
     )
 
 
-@router.patch("/tasks/{task_id}", response_model=TicketTaskRead)
+# Canonical task handlers are registered first in main.py. Retain these legacy
+# runtime registrations, but do not overwrite their actual OpenAPI contracts.
+@router.patch("/tasks/{task_id}", response_model=TicketTaskRead, include_in_schema=False)
 def update_ticket_task_handler(
     task_id: uuid.UUID,
     payload: TicketTaskUpdate,
@@ -227,7 +229,7 @@ def update_ticket_task_handler(
     )
 
 
-@router.post("/tasks/{task_id}/complete", response_model=TicketTaskRead)
+@router.post("/tasks/{task_id}/complete", response_model=TicketTaskRead, include_in_schema=False)
 def complete_ticket_task_handler(
     task_id: uuid.UUID,
     db: Session = Depends(get_db),

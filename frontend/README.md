@@ -15,6 +15,12 @@ View your app in AI Studio: https://ai.studio/apps/drive/1IbWPEYarD73WJgVnAdHdom
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+2. Configure AI credentials on the backend using `VEE_GEMINI_API_KEYS`, or sign in
+   as Owner and use Settings → API → AI provider. Do not put provider secrets in
+   frontend `VITE_*` variables. AI features use authenticated backend requests.
 3. Run the app:
    `npm run dev`
+
+The development frontend runs at `http://localhost:7300` and proxies `/api` to
+`http://localhost:7211` by default. Local presence/chat uses `http://localhost:7212`.
+The Docker frontend also publishes port 7300.

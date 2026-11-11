@@ -1,3 +1,4 @@
+import Avatar from '../../../components/Avatar';
 import React, { memo, useEffect, useMemo, useState } from 'react';
 import { EllipsisVerticalIcon, PaperClipIcon, PencilIcon, SparklesIcon, TrashIcon } from '../../../components/icons';
 import { User } from '../../../types';
@@ -24,7 +25,7 @@ const MessageItem: React.FC<Props> = ({ message, currentUser, conversation, grou
   const mine = message.senderId === currentUser?.id;
   const content = message.content ?? '';
   const senderName = mine ? 'You' : message.sender?.name ?? message.senderName ?? 'Unknown User';
-  const senderInitials = senderName.slice(0, 2).toUpperCase() || '?';
+  const senderMember = conversation?.members.find(member => member.userId === message.senderId);
   const createdAt = Number.isNaN(new Date(message.createdAt ?? '').getTime()) ? new Date() : new Date(message.createdAt);
   const reactions = message.reactions ?? [];
   const attachments = message.attachments ?? [];
@@ -62,7 +63,7 @@ const MessageItem: React.FC<Props> = ({ message, currentUser, conversation, grou
     <div className={rowClass}>
       {!useBubble && !grouped && (
         <span className="mt-1 grid h-9 w-9 shrink-0 place-items-center rounded-full bg-zinc-700 text-xs font-semibold text-white ring-1 ring-white/10">
-          {senderInitials}
+          <Avatar user={{ id: message.senderId, name: senderName, avatarFrame: senderMember?.avatarFrame, role: senderMember?.appRole ?? message.senderRole, avatarUrl: message.sender?.avatarUrl ?? senderMember?.avatarUrl }} className="h-full w-full" />
         </span>
       )}
       {!useBubble && grouped && <span className="w-9 shrink-0" />}

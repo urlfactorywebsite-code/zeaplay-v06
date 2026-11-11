@@ -1,0 +1,26 @@
+{
+  "authenticated_gets": 300,
+  "role_categories": [
+    "ADMIN",
+    "MANAGER",
+    "OWNER",
+    "USER"
+  ],
+  "statuses": {
+    "200": 305,
+    "422": 1
+  },
+  "information_sections": [
+    "overview",
+    "timeline",
+    "subtasks",
+    "points",
+    "activity"
+  ],
+  "all_cors_headers_expected": true,
+  "push_storage_rollback": {
+    "push_storage": "save/flush/read and rollback",
+    "result": "PASS",
+    "persisted_test_rows": 0
+  }
+}

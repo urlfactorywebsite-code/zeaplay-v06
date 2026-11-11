@@ -1,0 +1,597 @@
+--- prior-phase7/backend/app/cache.py
++++ final-review/backend/app/cache.py
+@@ -1,19 +1,38 @@
+ import json
+-from typing import Any, Iterable, Optional
++import logging
++from collections.abc import Iterable
++from threading import Lock
++from time import monotonic
++from typing import Any
+ from urllib.parse import urlencode
+ 
+ try:
+     import redis
++    from redis.backoff import NoBackoff
++    from redis.retry import Retry
+ except ImportError:  # pragma: no cover
+     redis = None
+ 
+ from .config import get_settings
+ 
+-
+-_REDIS_CLIENT: Optional[Any] = None
++_REDIS_CLIENT: Any | None = None
++_WARNING_LOCK = Lock()
++_last_warning = float("-inf")
++log = logging.getLogger(__name__)
++_CACHE_ERRORS = (redis.exceptions.RedisError,) if redis is not None else ()
+ 
+ 
+-def _get_client() -> Optional[Any]:
++def _warn_unavailable() -> None:
++    global _last_warning
++    with _WARNING_LOCK:
++        now = monotonic()
++        if now - _last_warning >= 30:
++            _last_warning = now
++            # Cache keys, URLs and exception bodies can contain private data.
++            log.warning("Cache unavailable; using authoritative database reads")
++
++
++def _get_client() -> Any | None:
+     global _REDIS_CLIENT
+     if redis is None:
+         return None
+@@ -25,6 +44,9 @@
+         _REDIS_CLIENT = redis.Redis.from_url(
+             redis_url,
+             decode_responses=True,
++            socket_connect_timeout=1,
++            socket_timeout=1,
++            retry=Retry(NoBackoff(), 0),
+         )
+     return _REDIS_CLIENT
+ 
+@@ -37,7 +59,7 @@
+     return _cache_prefix()
+ 
+ 
+-def get_redis_client() -> Optional[Any]:
++def get_redis_client() -> Any | None:
+     return _get_client()
+ 
+ 
+@@ -57,27 +79,46 @@
+     return f"{_cache_prefix()}:{resource}:tenant:{tenant_id}:"
+ 
+ 
+-def get_cached_json(cache_key: str) -> Optional[Any]:
++def get_cached_json(cache_key: str) -> Any | None:
+     client = _get_client()
+     if client is None:
+         return None
+-    payload = client.get(cache_key)
++    try:
++        payload = client.get(cache_key)
++    except _CACHE_ERRORS:
++        _warn_unavailable()
++        return None
+     if not payload:
+         return None
+-    return json.loads(payload)
++    try:
++        return json.loads(payload)
++    except (ValueError, TypeError):
++        _warn_unavailable()
++        return None
+ 
+ 
+ def set_cached_json(cache_key: str, value: Any, *, ttl_seconds: int) -> None:
+     client = _get_client()
+     if client is None:
+         return
+-    client.setex(cache_key, ttl_seconds, json.dumps(value))
++    try:
++        client.setex(cache_key, ttl_seconds, json.dumps(value))
++    except _CACHE_ERRORS:
++        _warn_unavailable()
+ 
+ 
+ def invalidate_prefix(prefix: str) -> None:
+     client = _get_client()
+     if client is None:
+         return
+-    keys = list(client.scan_iter(match=f"{prefix}*"))
+-    if keys:
+-        client.delete(*keys)
++    try:
++        batch = []
++        for key in client.scan_iter(match=f"{prefix}*", count=100):
++            batch.append(key)
++            if len(batch) == 100:
++                client.delete(*batch)
++                batch.clear()
++        if batch:
++            client.delete(*batch)
++    except _CACHE_ERRORS:
++        _warn_unavailable()
+--- prior-phase7/backend/app/routers/tasks.py
++++ final-review/backend/app/routers/tasks.py
+@@ -226,6 +226,13 @@
+             )
+         )
+     return stmt
++
++
++def _task_cache_allowed(user: models.User) -> bool:
++    # Employee/manager membership can be revoked between cache writes. Serving
++    # task bodies or aggregate counts from their old scope would bypass live
++    # authorization after a missed invalidation or Redis outage.
++    return user.role in {models.RoleEnum.OWNER, models.RoleEnum.ADMIN}
+ 
+ 
+ def _resolve_task_followers(
+@@ -493,7 +500,7 @@
+ ) -> List[schemas.TaskRead]:
+     manager_notifications_created = False
+     cache_key = None
+-    if skip_overdue_notifications:
++    if skip_overdue_notifications and _task_cache_allowed(current_user):
+         tenant_id = str(current_user.tenant_id or settings.default_tenant_id)
+         cache_key = build_cache_key(
+             resource="tasks:list",
+@@ -946,7 +953,7 @@
+         "sort_order": sort_order,
+     }
+     cache_key = _list_cache_key(tenant_id=tenant_id, user_id=str(current_user.id), params=cache_params)
+-    cached_payload = get_cached_json(cache_key)
++    cached_payload = get_cached_json(cache_key) if _task_cache_allowed(current_user) else None
+     if cached_payload is not None:
+         return schemas.TaskListResponse.model_validate(cached_payload)
+ 
+@@ -1010,11 +1017,12 @@
+         next_cursor=next_cursor,
+         has_more=has_more,
+     )
+-    set_cached_json(
+-        cache_key,
+-        response_payload.model_dump(mode="json"),
+-        ttl_seconds=settings.task_list_cache_ttl_seconds,
+-    )
++    if _task_cache_allowed(current_user):
++        set_cached_json(
++            cache_key,
++            response_payload.model_dump(mode="json"),
++            ttl_seconds=settings.task_list_cache_ttl_seconds,
++        )
+     _log_slow_endpoint("tasks.page", started_at)
+     return response_payload
+ 
+@@ -1053,7 +1061,7 @@
+         "quick_filter": quick_filter,
+     }
+     cache_key = _kanban_cache_key(tenant_id=tenant_id, user_id=str(current_user.id), params=cache_params)
+-    cached_payload = get_cached_json(cache_key)
++    cached_payload = get_cached_json(cache_key) if _task_cache_allowed(current_user) else None
+     if cached_payload is not None:
+         return schemas.TaskKanbanResponse.model_validate(cached_payload)
+ 
+@@ -1104,11 +1112,12 @@
+         )
+ 
+     response_payload = schemas.TaskKanbanResponse(columns=column_payloads)
+-    set_cached_json(
+-        cache_key,
+-        response_payload.model_dump(mode="json"),
+-        ttl_seconds=settings.task_list_cache_ttl_seconds,
+-    )
++    if _task_cache_allowed(current_user):
++        set_cached_json(
++            cache_key,
++            response_payload.model_dump(mode="json"),
++            ttl_seconds=settings.task_list_cache_ttl_seconds,
++        )
+     _log_slow_endpoint("tasks.kanban", started_at)
+     return response_payload
+ 
+@@ -1161,7 +1170,7 @@
+         "quick_filter": quick_filter,
+     }
+     cache_key = _calendar_cache_key(tenant_id=tenant_id, user_id=str(current_user.id), params=cache_params)
+-    cached_payload = get_cached_json(cache_key)
++    cached_payload = get_cached_json(cache_key) if _task_cache_allowed(current_user) else None
+     if cached_payload is not None:
+         return schemas.TaskCalendarSummaryResponse.model_validate(cached_payload)
+ 
+@@ -1219,7 +1228,8 @@
+         )
+         iterator = iterator + timedelta(days=1)
+     response_payload = schemas.TaskCalendarSummaryResponse(start_date=start, end_date=end, days=days)
+-    set_cached_json(cache_key, response_payload.model_dump(mode="json"), ttl_seconds=45)
++    if _task_cache_allowed(current_user):
++        set_cached_json(cache_key, response_payload.model_dump(mode="json"), ttl_seconds=45)
+     _log_slow_endpoint("tasks.calendar.summary", started_at)
+     return response_payload
+ 
+--- prior-phase7/backend/app/tickets/workflow_router.py
++++ final-review/backend/app/tickets/workflow_router.py
+@@ -208,7 +208,9 @@
+     )
+ 
+ 
+-@router.patch("/tasks/{task_id}", response_model=TicketTaskRead)
++# Canonical task handlers are registered first in main.py. Retain these legacy
++# runtime registrations, but do not overwrite their actual OpenAPI contracts.
++@router.patch("/tasks/{task_id}", response_model=TicketTaskRead, include_in_schema=False)
+ def update_ticket_task_handler(
+     task_id: uuid.UUID,
+     payload: TicketTaskUpdate,
+@@ -227,7 +229,7 @@
+     )
+ 
+ 
+-@router.post("/tasks/{task_id}/complete", response_model=TicketTaskRead)
++@router.post("/tasks/{task_id}/complete", response_model=TicketTaskRead, include_in_schema=False)
+ def complete_ticket_task_handler(
+     task_id: uuid.UUID,
+     db: Session = Depends(get_db),
+--- prior-phase7/backend/sql/zeaplay_v2_phase7_readiness.sql
++++ final-review/backend/sql/zeaplay_v2_phase7_readiness.sql
+@@ -12,13 +12,31 @@
+        OR (SELECT version_num FROM alembic_version LIMIT 1) <> 'k1a3c5e7f9b1' THEN
+         RAISE EXCEPTION 'Unexpected migration revision; stop activation';
+     END IF;
++    -- Names alone can conceal non-unique, invalid or differently keyed indexes.
+     SELECT count(*) INTO missing_count FROM (VALUES
+-        ('uq_xp_ledger_tenant_idempotency'), ('uq_xp_ledger_reversal'),
+-        ('uq_activity_user_parent'), ('uq_activity_user_slot'),
+-        ('uq_notification_recipient_event'), ('ix_notification_pending_chronology')
+-    ) AS required(name) WHERE NOT EXISTS (
+-        SELECT 1 FROM pg_indexes i WHERE i.schemaname=current_schema() AND i.indexname=required.name
+-          AND (required.name NOT LIKE 'uq_%' OR i.indexdef LIKE 'CREATE UNIQUE INDEX %')
++        ('xp_ledger', 'uq_xp_ledger_tenant_idempotency', ARRAY['tenant_id','idempotency_key'], true, NULL),
++        ('xp_ledger', 'uq_xp_ledger_reversal', ARRAY['tenant_id','reversal_of_id'], true, NULL),
++        ('task_activity_contexts', 'uq_activity_user_parent', ARRAY['tenant_id','user_id','task_id'], true, NULL),
++        ('task_activity_contexts', 'uq_activity_user_slot', ARRAY['tenant_id','user_id','slot'], true, NULL),
++        ('notifications', 'uq_notification_recipient_event', ARRAY['user_id','dedupe_key'], true, NULL),
++        ('notifications', 'ix_notification_pending_chronology', ARRAY['created_at','id'], false, 'delivery_pendingistrue')
++    ) AS required(table_name, index_name, columns, is_unique, predicate)
++    WHERE NOT EXISTS (
++        SELECT 1 FROM pg_index i
++        JOIN pg_class relation ON relation.oid=i.indrelid
++        JOIN pg_namespace ns ON ns.oid=relation.relnamespace
++        JOIN pg_class idx ON idx.oid=i.indexrelid
++        JOIN pg_am access_method ON access_method.oid=idx.relam
++        WHERE ns.nspname=current_schema() AND relation.relname=required.table_name
++          AND idx.relname=required.index_name AND i.indisunique=required.is_unique
++          AND i.indisvalid AND i.indisready AND access_method.amname='btree'
++          AND i.indnatts=cardinality(required.columns)
++          AND (SELECT array_agg(attribute.attname::text ORDER BY keys.ordinality)
++               FROM unnest(i.indkey) WITH ORDINALITY AS keys(attnum, ordinality)
++               JOIN pg_attribute attribute ON attribute.attrelid=i.indrelid AND attribute.attnum=keys.attnum
++              )=required.columns
++          AND regexp_replace(lower(pg_get_expr(i.indpred,i.indrelid)), '[()[:space:]]', '', 'g')
++              IS NOT DISTINCT FROM required.predicate
+     );
+     IF missing_count > 0 THEN
+         RAISE EXCEPTION 'Required concurrency/idempotency indexes missing';
+@@ -51,11 +69,70 @@
+           OR r.user_id<>original.user_id OR original.reversal_of_id IS NOT NULL)) THEN
+         RAISE EXCEPTION 'Invalid compensating ledger entry; stop activation';
+     END IF;
+-    SELECT count(*) INTO missing_count FROM (VALUES ('audit_events'),('xp_ledger'),('task_work_intervals'),('task_activity_contexts')) AS required(name)
++    -- Exact frozen guard contracts: another trigger on the same table is insufficient.
++    -- Replica-only triggers do not protect ordinary application writes.
++    SELECT count(*) INTO missing_count FROM (VALUES
++        ('audit_events', 'zea_activity_insert', 7, 'zea_activity_insert_guard'),
++        ('audit_events', 'zea_activity_update', 19, 'zea_activity_update_guard'),
++        ('audit_events', 'zea_activity_delete', 11, 'zea_activity_delete_guard'),
++        ('xp_ledger', 'zea_ledger_insert', 7, 'zea_ledger_insert_guard'),
++        ('xp_ledger', 'zea_ledger_update', 19, 'zea_ledger_update_guard'),
++        ('xp_ledger', 'zea_ledger_delete', 11, 'zea_ledger_delete_guard'),
++        ('task_work_intervals', 'zea_interval_insert', 7, 'zea_interval_insert_guard'),
++        ('task_work_intervals', 'zea_interval_update', 19, 'zea_interval_update_guard'),
++        ('task_work_intervals', 'zea_interval_delete', 11, 'zea_interval_delete_guard'),
++        ('subtasks', 'zea_subtask_insert', 7, 'zea_subtask_insert_guard'),
++        ('subtasks', 'zea_subtask_update', 19, 'zea_subtask_update_guard'),
++        ('tasks', 'zea_task_owner', 19, 'zea_task_owner_guard'),
++        ('users', 'zea_user_tenant', 19, 'zea_user_tenant_guard'),
++        ('tasks', 'zea_task_delete', 11, 'zea_task_delete_guard'),
++        ('subtasks', 'zea_subtask_delete', 11, 'zea_subtask_delete_guard'),
++        ('users', 'zea_user_delete', 11, 'zea_user_delete_guard'),
++        ('task_workflow_settings', 'zea_policy_update', 19, 'zea_policy_update_guard'),
++        ('task_workflow_settings', 'zea_policy_delete', 11, 'zea_policy_delete_guard'),
++        ('audit_events', 'zea_v2_activity_shape_insert', 7, 'zea_v2_activity_shape_insert_guard'),
++        ('audit_events', 'zea_v2_activity_shape_update', 19, 'zea_v2_activity_shape_update_guard'),
++        ('xp_ledger', 'zea_v2_ledger_shape_insert', 7, 'zea_v2_ledger_shape_insert_guard'),
++        ('xp_ledger', 'zea_v2_ledger_shape_update', 19, 'zea_v2_ledger_shape_update_guard'),
++        ('subtasks', 'zea_v2_subtask_shape_insert', 7, 'zea_v2_subtask_shape_insert_guard'),
++        ('subtasks', 'zea_v2_subtask_shape_update', 19, 'zea_v2_subtask_shape_update_guard'),
++        ('tasks', 'zea_v2_task_policy_owner', 19, 'zea_v2_task_policy_owner_guard'),
++        ('users', 'zea_v2_user_policy_owner', 19, 'zea_v2_user_policy_owner_guard'),
++        ('subtasks', 'zea_v2_subtask_version', 19, 'zea_v2_subtask_version_guard'),
++        ('subtasks', 'zea_v2_subtask_transition', 19, 'zea_v2_subtask_transition_guard'),
++        ('audit_events', 'zea_v2_audit_events_truncate', 34, 'zea_v2_audit_events_truncate_guard'),
++        ('xp_ledger', 'zea_v2_xp_ledger_truncate', 34, 'zea_v2_xp_ledger_truncate_guard'),
++        ('task_work_intervals', 'zea_v2_task_work_intervals_truncate', 34, 'zea_v2_task_work_intervals_truncate_guard'),
++        ('subtasks', 'zea_v3_subtask_insert', 7, 'zea_v3_subtask_insert_guard'),
++        ('subtasks', 'zea_v3_subtask_order', 19, 'zea_v3_subtask_order_guard'),
++        ('subtasks', 'zea_v3_subtask_version', 19, 'zea_v3_subtask_version_guard'),
++        ('subtasks', 'zea_v3_subtask_delete', 11, 'zea_v3_subtask_delete_guard'),
++        ('xp_ledger', 'zea_v3_ledger_shape', 7, 'zea_v3_ledger_shape_guard'),
++        ('task_workflow_settings', 'zea_v3_policy_insert', 7, 'zea_v3_policy_insert_guard'),
++        ('task_workflow_settings', 'zea_v3_policy_update', 19, 'zea_v3_policy_update_guard'),
++        ('xp_ledger', 'zea_v4_ledger_accounting', 7, 'zea_v4_ledger_accounting_guard'),
++        ('subtasks', 'zea_v4_subtask_assignee', 7, 'zea_v4_subtask_assignee_guard'),
++        ('tasks', 'zea_v4_task_assignee', 19, 'zea_v4_task_assignee_guard'),
++        ('users', 'zea_v4_assignee_tenant', 19, 'zea_v4_assignee_tenant_guard'),
++        ('task_activity_contexts', 'zea_v5_context_insert', 7, 'zea_v5_context_insert_guard'),
++        ('task_activity_contexts', 'zea_v5_context_update', 19, 'zea_v5_context_update_guard'),
++        ('task_activity_contexts', 'zea_v5_context_delete', 11, 'zea_v5_context_delete_guard'),
++        ('task_work_corrections', 'zea_v5_correction_insert', 7, 'zea_v5_correction_insert_guard'),
++        ('task_work_corrections', 'zea_v5_correction_update', 19, 'zea_v5_correction_update_guard'),
++        ('task_work_corrections', 'zea_v5_correction_delete', 11, 'zea_v5_correction_delete_guard'),
++        ('task_activity_contexts', 'zea_v5_task_activity_contexts_truncate', 34, 'zea_v5_task_activity_contexts_truncate_guard'),
++        ('task_work_corrections', 'zea_v5_task_work_corrections_truncate', 34, 'zea_v5_task_work_corrections_truncate_guard'),
++        ('notifications', 'zea_notification_owner', 23, 'zea_notification_owner_guard'),
++        ('notification_preferences', 'zea_notification_policy', 23, 'zea_notification_policy_guard')
++    ) AS required(table_name, trigger_name, type_bits, function_name)
+     WHERE NOT EXISTS (SELECT 1 FROM pg_trigger trigger
+-        JOIN pg_class relation ON relation.oid=trigger.tgrelid JOIN pg_namespace ns ON ns.oid=relation.relnamespace
+-        WHERE ns.nspname=current_schema() AND relation.relname=required.name
+-          AND trigger.tgname LIKE 'zea_%' AND trigger.tgenabled<>'D' AND NOT trigger.tgisinternal);
++        JOIN pg_class relation ON relation.oid=trigger.tgrelid
++        JOIN pg_namespace ns ON ns.oid=relation.relnamespace
++        JOIN pg_proc handler ON handler.oid=trigger.tgfoid
++        WHERE ns.nspname=current_schema() AND relation.relname=required.table_name
++          AND trigger.tgname=required.trigger_name AND trigger.tgtype=required.type_bits
++          AND trigger.tgenabled IN ('O','A') AND NOT trigger.tgisinternal
++          AND handler.pronamespace=ns.oid AND handler.proname=required.function_name);
+     IF missing_count>0 THEN
+         RAISE EXCEPTION 'Essential task audit guards missing or disabled';
+     END IF;
+--- prior-phase7/backend/tests/test_final_readiness.py
++++ final-review/backend/tests/test_final_readiness.py
+@@ -0,0 +1,171 @@
++"""Final review regressions over actual HTTP guards and durable SQL state."""
++# ruff: noqa: F811 -- shared isolated fixtures
++import os
++from time import perf_counter
++
++import pytest
++import redis
++import sqlalchemy as sa
++from sqlalchemy.orm import Session
++
++from backend.app import cache
++from backend.app import models as m
++from backend.app.routers import tasks
++from backend.tests.test_phase7_system import login, ok, parent, system  # noqa: F401
++from backend.tests.test_task_audit_foundation import engine, harness  # noqa: F401
++
++
++class UnavailableCache:
++    def get(self, *_):
++        raise redis.ConnectionError("synthetic private cache URL")
++
++    def setex(self, *_):
++        raise redis.ConnectionError("synthetic private cache URL")
++
++    def scan_iter(self, **_):
++        raise redis.ConnectionError("synthetic private cache URL")
++
++
++def test_cache_outage_preserves_committed_http_success_and_db_reads(system, monkeypatch, caplog):
++    client, engine, _ = system
++    owner = login(client)
++    task = parent(client, owner, count=0)
++    monkeypatch.setattr(cache, "_get_client", lambda: UnavailableCache())
++    for name in ("get_cached_json", "set_cached_json", "invalidate_prefix"):
++        monkeypatch.setattr(tasks, name, getattr(cache, name))
++    changed = ok(client, "PATCH", f"/api/tasks/{task['id']}", owner, json={"title": "Committed during cache outage"})
++    assert changed["title"] == "Committed during cache outage"
++    page = ok(client, "GET", "/api/tasks/page", owner)
++    assert task["id"] in {row["id"] for row in page["items"]}
++    with Session(engine) as db:
++        assert db.get(m.Task, task["id"]).title == changed["title"]
++    assert "synthetic private cache URL" not in caplog.text
++
++
++@pytest.mark.parametrize("path", ["/api/tasks/page", "/api/tasks/kanban", "/api/tasks/calendar/summary?start_date=2026-11-04&end_date=2026-11-04"])
++@pytest.mark.parametrize("role", [m.RoleEnum.USER, m.RoleEnum.MANAGER])
++def test_removed_watcher_cannot_replay_cached_task_or_aggregate_data(system, monkeypatch, path, role):
++    client, engine, _ = system
++    with Session(engine) as db:
++        db.get(m.User, "watcher").role = role
++        db.commit()
++    owner, watcher = login(client), login(client, "watcher")
++    task = parent(client, owner, count=0)
++    if "kanban" in path:
++        with Session(engine) as db:
++            db.add(m.KanbanColumn(id="TODO", title="TODO", order=0))
++            db.commit()
++    cached = ok(client, "GET", path, watcher)
++    assert task["id"] in str(cached) or ("days" in cached and cached["days"][0]["total"] == 1)
++    with Session(engine) as db:
++        db.get(m.Task, task["id"]).followers = []
++        db.commit()
++    # Simulate missed invalidation or a previously connected Redis cache after an outage.
++    monkeypatch.setattr(tasks, "get_cached_json", lambda *_: cached)
++    fresh = ok(client, "GET", path, watcher)
++    assert task["id"] not in str(fresh)
++    if "days" in fresh:
++        assert fresh["days"][0]["total"] == 0
++
++
++def test_cache_invalidation_is_bounded_and_json_corruption_is_a_miss(monkeypatch):
++    class Cached:
++        def __init__(self):
++            self.batches = []
++
++        def get(self, _):
++            return "not-json"
++
++        def scan_iter(self, **kwargs):
++            assert kwargs == {"match": "scoped:*", "count": 100}
++            return iter(f"scoped:{i}" for i in range(1001))
++
++        def delete(self, *keys):
++            self.batches.append(keys)
++
++    cached = Cached()
++    monkeypatch.setattr(cache, "_get_client", lambda: cached)
++    assert cache.get_cached_json("scoped:bad") is None
++    cache.invalidate_prefix("scoped:")
++    assert [len(batch) for batch in cached.batches] == [100] * 10 + [1]
++    assert len({key for batch in cached.batches for key in batch}) == 1001
++
++
++def test_cache_outage_warnings_are_bounded_and_sanitized(monkeypatch, caplog):
++    monkeypatch.setattr(cache, "_get_client", lambda: UnavailableCache())
++    monkeypatch.setattr(cache, "_last_warning", float("-inf"))
++    for _ in range(100):
++        assert cache.get_cached_json("private-key") is None
++        cache.set_cached_json("private-key", {}, ttl_seconds=10)
++        cache.invalidate_prefix("private-key")
++    assert caplog.text.count("Cache unavailable") == 1
++    assert "private-key" not in caplog.text and "synthetic private" not in caplog.text
++
++
++@pytest.mark.parametrize("role", [m.RoleEnum.OWNER, m.RoleEnum.ADMIN])
++def test_owner_cache_is_retained_with_tenant_and_user_scoping(system, monkeypatch, role):
++    client, engine, _ = system
++    with Session(engine) as db:
++        db.get(m.User, "owner").role = role
++        db.commit()
++    owner = login(client)
++    expected = ok(client, "GET", "/api/tasks/page", owner)
++    keys = []
++
++    def cached(key):
++        keys.append(key)
++        return expected
++
++    monkeypatch.setattr(tasks, "get_cached_json", cached)
++    assert ok(client, "GET", "/api/tasks/page", owner) == expected
++    assert len(keys) == 1 and ":tenant:" in keys[0] and ":user:owner:" in keys[0]
++
++
++def test_member_page_queries_remain_bounded_without_acl_cache(system, record_property):
++    client, engine, _ = system
++    worker = login(client, "worker")
++    with engine.begin() as connection:
++        connection.execute(sa.insert(m.Task), [
++            {"id": f"member-{i}", "title": f"Task {i}", "created_by_id": "owner", "assigned_to_id": "worker"}
++            for i in range(250)
++        ])
++    statements = []
++
++    def capture(_conn, _cursor, statement, *_):
++        statements.append(statement)
++
++    sa.event.listen(engine, "before_cursor_execute", capture)
++    started = perf_counter()
++    try:
++        page = ok(client, "GET", "/api/tasks/page?page_size=25", worker)
++    finally:
++        elapsed = perf_counter() - started
++        sa.event.remove(engine, "before_cursor_execute", capture)
++    assert len(page["items"]) == 25 and page["total"] >= 250
++    assert len(statements) <= 20
++    assert not any(sql.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for sql in statements)
++    record_property("member_page_profile", {"rows": 250, "page": 25, "queries": len(statements), "seconds": elapsed})
++
++
++def test_stopped_real_redis_preserves_http_mutation_and_read(system, monkeypatch):
++    url = os.getenv("ZEA_FINAL_OFFLINE_REDIS_URL")
++    if not url:
++        pytest.skip("Run only while the explicitly owned disposable Redis server is stopped")
++    assert url == "redis://127.0.0.1:16379/15"
++    real_client = redis.Redis.from_url(url, socket_connect_timeout=1, socket_timeout=1, retry=redis.retry.Retry(redis.backoff.NoBackoff(), 0))
++    with pytest.raises(redis.RedisError):
++        real_client.ping()
++    monkeypatch.setattr(cache, "_get_client", lambda: real_client)
++    client, engine, _ = system
++    owner = login(client)
++    task = parent(client, owner, count=0)
++    for name in ("get_cached_json", "set_cached_json", "invalidate_prefix"):
++        monkeypatch.setattr(tasks, name, getattr(cache, name))
++    started = perf_counter()
++    ok(client, "PATCH", f"/api/tasks/{task['id']}", owner, json={"title": "Real Redis offline"})
++    page = ok(client, "GET", "/api/tasks/page", owner)
++    assert task["id"] in {row["id"] for row in page["items"]}
++    with Session(engine) as db:
++        assert db.get(m.Task, task["id"]).title == "Real Redis offline"
++    assert perf_counter() - started < 10
++    real_client.close()
+--- prior-phase7/backend/tests/test_final_migration_gate.py
++++ final-review/backend/tests/test_final_migration_gate.py
+@@ -0,0 +1,34 @@
++"""Reject silent production guard drift using real PostgreSQL catalog state."""
++# ruff: noqa: F811 -- shared disposable fixture
++from pathlib import Path
++
++import pytest
++import sqlalchemy as sa
++from alembic.migration import MigrationContext
++
++from backend.tests.test_phase7_migrations import apply, before_v2, seed
++from backend.tests.test_task_audit_foundation import engine  # noqa: F401
++
++
++@pytest.mark.parametrize("drift", [
++    "DROP TRIGGER zea_ledger_update ON xp_ledger",
++    "ALTER TABLE xp_ledger DISABLE TRIGGER zea_ledger_delete",
++    "ALTER TABLE xp_ledger ENABLE REPLICA TRIGGER zea_ledger_update",
++    "DROP TRIGGER zea_v5_context_update ON task_activity_contexts",
++    "DROP INDEX uq_xp_ledger_tenant_idempotency; CREATE UNIQUE INDEX uq_xp_ledger_tenant_idempotency ON xp_ledger(id)",
++    "DROP INDEX ix_notification_pending_chronology; CREATE INDEX ix_notification_pending_chronology ON notifications(id)",
++])
++def test_readiness_rejects_missing_disabled_replica_or_spoofed_guards(engine, monkeypatch, drift):
++    if engine.dialect.name != "postgresql":
++        pytest.skip("Production PostgreSQL catalog guard")
++    with engine.begin() as connection:
++        legacy = before_v2()
++        legacy.create_all(connection)
++        seed(connection, legacy)
++        apply(connection, monkeypatch)
++        MigrationContext.configure(connection)._ensure_version_table()
++        connection.exec_driver_sql("INSERT INTO alembic_version VALUES ('k1a3c5e7f9b1')")
++        connection.exec_driver_sql(drift)
++    script = (Path(__file__).parents[1] / "sql" / "zeaplay_v2_phase7_readiness.sql").read_text(encoding="utf-8")
++    with engine.connect() as connection, pytest.raises(sa.exc.DBAPIError, match="(guards|indexes) missing"):
++        connection.execute(sa.text(script))
+--- prior-phase7/backend/tests/test_final_api_contracts.py
++++ final-review/backend/tests/test_final_api_contracts.py
+@@ -0,0 +1,30 @@
++"""The published task contract must describe the first runtime route."""
++from pathlib import Path
++
++import pytest
++from fastapi import FastAPI
++from fastapi.testclient import TestClient
++
++from backend.app.routers import tasks
++from backend.app.tickets import workflow_router
++
++
++@pytest.mark.parametrize("path,method", [
++    ("/api/tasks/{task_id}", "patch"),
++    ("/api/tasks/{task_id}/complete", "post"),
++])
++def test_openapi_describes_canonical_task_response_not_shadowed_ticket_route(path, method):
++    # Match the actual application registration order without starting its
++    # seeds, maintenance or external services.
++    source = (Path(__file__).parents[1] / "app" / "main.py").read_text(encoding="utf-8")
++    assert source.index('app.include_router(tasks.router, prefix="/api")') < source.index("app.include_router(tickets_workflow_router.router)")
++    app = FastAPI()
++    app.include_router(tasks.router)
++    app.include_router(tasks.router, prefix="/api")
++    app.include_router(workflow_router.router)
++    with TestClient(app) as client:
++        schema = client.get("/openapi.json").json()
++    response = schema["paths"][path][method]["responses"]["200"]["content"]["application/json"]["schema"]
++    assert response == {"$ref": "#/components/schemas/TaskRead"}
++    # Hiding unreachable duplicate documentation must not remove ticket APIs.
++    assert "/api/tickets/{ticket_id}/tasks" in schema["paths"]

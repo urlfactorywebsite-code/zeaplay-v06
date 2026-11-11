@@ -1,0 +1,137 @@
+{
+  "engine": "axe-core 4.14.0",
+  "tags": [
+    "wcag2a",
+    "wcag2aa",
+    "wcag21aa"
+  ],
+  "scans": [
+    {
+      "width": 1280,
+      "tab": "Overview",
+      "violations": [],
+      "passes": 19,
+      "incomplete": [
+        "color-contrast"
+      ]
+    },
+    {
+      "width": 1280,
+      "tab": "Status timeline",
+      "violations": [],
+      "passes": 17,
+      "incomplete": [
+        "color-contrast"
+      ]
+    },
+    {
+      "width": 1280,
+      "tab": "Subtasks",
+      "violations": [],
+      "passes": 21,
+      "incomplete": [
+        "color-contrast"
+      ]
+    },
+    {
+      "width": 1280,
+      "tab": "Points",
+      "violations": [],
+      "passes": 19,
+      "incomplete": [
+        "color-contrast"
+      ]
+    },
+    {
+      "width": 1280,
+      "tab": "Activity",
+      "violations": [],
+      "passes": 19,
+      "incomplete": [
+        "color-contrast"
+      ]
+    },
+    {
+      "width": 390,
+      "tab": "Overview",
+      "violations": [],
+      "passes": 19,
+      "incomplete": [
+        "color-contrast"
+      ]
+    },
+    {
+      "width": 390,
+      "tab": "Status timeline",
+      "violations": [],
+      "passes": 17,
+      "incomplete": [
+        "color-contrast"
+      ]
+    },
+    {
+      "width": 390,
+      "tab": "Subtasks",
+      "violations": [],
+      "passes": 21,
+      "incomplete": [
+        "color-contrast"
+      ]
+    },
+    {
+      "width": 390,
+      "tab": "Points",
+      "violations": [],
+      "passes": 19,
+      "incomplete": [
+        "color-contrast"
+      ]
+    },
+    {
+      "width": 390,
+      "tab": "Activity",
+      "violations": [],
+      "passes": 19,
+      "incomplete": [
+        "color-contrast"
+      ]
+    },
+    {
+      "width": 390,
+      "state": "error",
+      "violations": [],
+      "passes": 15,
+      "incomplete": [
+        "color-contrast"
+      ]
+    },
+    {
+      "width": 390,
+      "state": "loading retry",
+      "violations": [],
+      "passes": 19,
+      "incomplete": [
+        "color-contrast"
+      ]
+    },
+    {
+      "width": 390,
+      "state": "empty history",
+      "violations": [],
+      "passes": 15,
+      "incomplete": [
+        "color-contrast"
+      ]
+    },
+    {
+      "width": 390,
+      "state": "cold loading",
+      "loadingBefore": "Loading task information…",
+      "violations": [],
+      "passes": 15,
+      "incomplete": [
+        "color-contrast"
+      ]
+    }
+  ]
+}

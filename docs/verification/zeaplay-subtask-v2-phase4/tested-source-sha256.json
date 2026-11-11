@@ -1,0 +1,22 @@
+{
+  "backend/alembic/versions/i9e1a3c5d7f9_task_activity.py": "a7aa030b040fa3de48bbff0416d0681fe8333608c78277cbae9c8b8cb26063bf",
+  "backend/app/models.py": "cb17c89db1e9e17567c761bfa97eeaa0216e7bbe0d80632e0a8aa27e187b40b6",
+  "backend/app/schemas.py": "2e9e698bbde6b3ac07c1485929c76f2fe574df2b869fa585a02b9202f7a64d5a",
+  "backend/app/backups/registry.py": "2e1391419d7f535c0fd5ab1b6ed78e977af5c7bba4beb24b4121f866a7378054",
+  "backend/app/backups/service.py": "4a319f520448c18b1f6465c36dbd1773424d87ee29330d1a2fa34765152bc521",
+  "backend/app/routers/tasks.py": "9dbd013db596b2518494d20d5fb7abc046eac15bc6e692aab079227d99f6fc07",
+  "backend/app/services/subtasks.py": "76f321182fcb35866fedf561c2cf73073084a10b0d3eca11beb7680f99a3f516",
+  "backend/app/services/task_activity.py": "ab870b2f017cb8120e14e3c3a32befe23dbd400fd91f432374de963c8853c291",
+  "backend/app/services/task_activity_schema.py": "d76a34618777e7fc5e45ae99763e6e215c8f1f6ce95adb9b6216dafb6f0c7795",
+  "backend/tests/test_task_activity.py": "cc3498ebd67b7546078882e73046991caaac3f481c67cdd6835fe999143b2883",
+  "backend/tests/test_task_tabs_review.py": "9cef4d221d5ad98d37a13728c246c4f75c3b627ab71fc9a7957f92194c6246aa",
+  "frontend/components/Header.tsx": "44b2aecf556837596ea041098d402f3e263a8c4f7e294cc00a89bc35a21c1be7",
+  "frontend/components/TaskActivityControl.tsx": "c913eafd8d1dfb541be9bb505ca115f96df2a8c82e2314b45e5880dbb9d12f7e",
+  "frontend/hooks/useTaskActivity.ts": "1a4b62db2f73acb29beb3384483e7187319504b68184df7a294e2fbbfd5822b8",
+  "frontend/hooks/useTaskWebSocket.ts": "5712f09452282bb7fc40a66f3b830beb08632445dec96ee2f6f8553d8eab8ac6",
+  "frontend/pages/AllTasks.tsx": "a9d05419f72056d623dc58ec0450913079afd9a7290a56e43b6687fd94238b87",
+  "frontend/services/mockApi.ts": "70ae7e6b9430917469414345587a134f90d72685782d3eb28fedce78934e5966",
+  "frontend/test/task-activity.test.ts": "e3b3b46299bbdd32be37dd66d3039f87b71c5aa1e3fe50b4665554184d590c08",
+  "frontend/types/taskActivity.ts": "71c489310826e445225f95f58a6c84d7f53a307ea92ec904f1fc5e8660898fac",
+  "frontend/utils/taskActivity.ts": "a922a6a45b9506cd35cf47964cd7b8c68700b11ee8d0896f76bcfac473247ef5"
+}

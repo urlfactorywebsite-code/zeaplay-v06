@@ -182,8 +182,13 @@ phase=recreating
 
 healthy=0
 for attempt in $(seq 1 60); do
+<<<<<<< ours
   if docker exec zea_backend python -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:6211/health",timeout=5)' > /dev/null 2>&1 &&
      docker exec zea_presence node -e 'fetch("http://127.0.0.1:6212/health",{signal:AbortSignal.timeout(5000)}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))' > /dev/null 2>&1 &&
+=======
+  if docker exec zea_backend python -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:7211/health",timeout=5)' > /dev/null 2>&1 &&
+     docker exec zea_presence node -e 'fetch("http://127.0.0.1:7212/health",{signal:AbortSignal.timeout(5000)}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))' > /dev/null 2>&1 &&
+>>>>>>> theirs
      docker exec zea_frontend wget -T 5 -q -O /dev/null http://127.0.0.1/ > /dev/null 2>&1; then
     healthy=1
     break
@@ -194,12 +199,20 @@ test "$healthy" = 1
 docker exec -i zea_backend python - <<'PY'
 import urllib.request, urllib.error
 for origin in ['https://todoplay.urlfactory.website','https://play.zeacrm.com']:
+<<<<<<< ours
     request=urllib.request.Request('http://127.0.0.1:6211/health',method='OPTIONS',headers={'Origin':origin,'Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'authorization,content-type'})
+=======
+    request=urllib.request.Request('http://127.0.0.1:7211/health',method='OPTIONS',headers={'Origin':origin,'Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'authorization,content-type'})
+>>>>>>> theirs
     with urllib.request.urlopen(request,timeout=5) as response:
         assert response.status==200 and response.headers.get('Access-Control-Allow-Origin')==origin
 print('PASS: running source backend CORS for both frontend domains')
 PY
+<<<<<<< ours
 docker exec zea_presence node -e '(async()=>{for(const origin of ["https://todoplay.urlfactory.website","https://play.zeacrm.com"]){const r=await fetch("http://127.0.0.1:6212/socket.io/?EIO=4&transport=polling",{method:"OPTIONS",headers:{Origin:origin,"Access-Control-Request-Method":"GET"},signal:AbortSignal.timeout(5000)});if(!r.ok||r.headers.get("access-control-allow-origin")!==origin)throw new Error("Presence CORS check failed");}console.log("PASS: running source presence CORS for both frontend domains")})().catch(e=>{console.error(e.message);process.exit(1)})'
+=======
+docker exec zea_presence node -e '(async()=>{for(const origin of ["https://todoplay.urlfactory.website","https://play.zeacrm.com"]){const r=await fetch("http://127.0.0.1:7212/socket.io/?EIO=4&transport=polling",{method:"OPTIONS",headers:{Origin:origin,"Access-Control-Request-Method":"GET"},signal:AbortSignal.timeout(5000)});if(!r.ok||r.headers.get("access-control-allow-origin")!==origin)throw new Error("Presence CORS check failed");}console.log("PASS: running source presence CORS for both frontend domains")})().catch(e=>{console.error(e.message);process.exit(1)})'
+>>>>>>> theirs
 python3 - "$backup" <<'PY'
 import json, pathlib, subprocess, sys
 before={c['Name'].lstrip('/'):c['Id'] for c in json.loads((pathlib.Path(sys.argv[1])/'containers.json').read_text())}

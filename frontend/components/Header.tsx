@@ -1,10 +1,11 @@
+import Avatar from './Avatar';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import TaskDocumentation from './TaskDocumentation';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth, useSearch, useTheme } from '../hooks/useAuth';
+import { useNavigation } from '../hooks/useNavigation';
 import api from '../services/mockApi';
 import { timeAgo } from '../utils';
-import { getUserAvatarUrl } from '../utils/userAvatar';
 import {
   UserIcon,
   ArrowRightOnRectangleIcon,
@@ -29,6 +30,12 @@ import GlobalProgressBar from './loading/GlobalProgressBar';
 
 // ✅ NEW IMPORT
 import ClockButton from './ClockAssistant/ClockButton';
+import TaskActivityControl from './TaskActivityControl';
+import { useTaskWebSocket } from '../hooks/useTaskWebSocket';
+import { notifyActivityChanged } from '../utils/taskActivity';
+import { notifyTasksChanged } from '../utils/taskEvents';
+import { notifyNotificationsChanged } from '../utils/notificationAlerts';
+import { useNotificationInbox } from '../hooks/useNotificationInbox';
 
 const notificationIconMap: Record<NotificationType, React.FC<React.SVGProps<SVGSVGElement>>> = {
   [NotificationType.TASK_CREATED]: BellIcon,
@@ -305,17 +312,28 @@ const themePresentation = {
   },
 };
 
-const Header = ({ onNotificationClick, onRewardNotificationClick, onSupportClick }) => {
+const Header = ({ onNotificationClick, onRewardNotificationClick }) => {
   const { user, logout } = useAuth();
+  const { pages: navigationPages, error: navigationError } = useNavigation();
+  const activityEnabled = !!user && !navigationError && navigationPages.some(page =>
+    ['tasks.list', 'kanban', 'calendar', 'gantt', 'dashboard'].includes(page.id) && page.access === 'allowed');
+  // One task stream for the mounted layout, shared by activity and task views.
+  const taskSocket = useTaskWebSocket({ enabled: activityEnabled, userId: user?.id, onEvent: payload => {
+    if (payload.type === 'tasks.resync') { notifyTasksChanged(); notifyNotificationsChanged(); notifyActivityChanged(); }
+    else if (payload.type === 'notifications.changed') { notifyNotificationsChanged(); notifyActivityChanged(); }
+    else if (payload.type === 'work.changed') notifyActivityChanged(typeof payload.user_id === 'string' ? payload.user_id : undefined);
+    else if (payload.type === 'activity.watch_denied') notifyActivityChanged();
+    else notifyTasksChanged();
+  } });
   const { searchQuery, setSearchQuery } = useSearch();
   const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
-  const profileAvatar = getUserAvatarUrl(user);
 
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
   const [docModalOpen, setDocModalOpen] = useState(false);
   const [notificationDropdownOpen, setNotificationDropdownOpen] = useState(false);
-  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const { scope: notificationScope, notifications, setNotifications, unreadCount, setUnreadCount, refresh: fetchNotifications } = useNotificationInbox(user?.id, user?.role, taskSocket.status === 'connected');
+  useEffect(() => { if (taskSocket.status === 'connected') notifyNotificationsChanged(); }, [taskSocket.status]);
   const [resolvedTheme, setResolvedTheme] = useState<HeaderTheme>('light');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -326,34 +344,28 @@ const Header = ({ onNotificationClick, onRewardNotificationClick, onSupportClick
   const [is12Hour, setIs12Hour] = useState(true);
   const [notificationPreviewOpen, setNotificationPreviewOpen] = useState(false);
   const [selectedNotification, setSelectedNotification] = useState<Notification | null>(null);
+  const [selectionScope, setSelectionScope] = useState<object | null>(null);
+  useEffect(() => {
+    setNotificationDropdownOpen(false); setNotificationPreviewOpen(false);
+    setSelectedNotification(null); setSelectionScope(null);
+  }, [notificationScope]);
 
   const profileDropdownRef = useRef(null);
   const notificationDropdownRef = useRef(null);
+  useEffect(() => {
+    if (!notificationDropdownOpen) return;
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setNotificationDropdownOpen(false);
+        notificationDropdownRef.current?.querySelector('button')?.focus();
+      }
+    };
+    window.addEventListener('keydown', escape);
+    return () => window.removeEventListener('keydown', escape);
+  }, [notificationDropdownOpen]);
   const refreshTimeoutRef = useRef<number | null>(null);
   const mobileMenuRef = useRef(null);
   const mobileMenuButtonRef = useRef(null);
-
-  const fetchNotifications = useCallback(async () => {
-    if (!user) return;
-    try {
-      const userNotifications = await api.getNotifications(user.id);
-      setNotifications(userNotifications);
-    } catch (error) {
-      console.error('Failed to fetch notifications:', error);
-    }
-  }, [user]);
-
-  useEffect(() => {
-    fetchNotifications();
-    const interval = setInterval(fetchNotifications, 30000);
-    return () => clearInterval(interval);
-  }, [fetchNotifications]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    window.addEventListener(APP_REFRESH_EVENT, fetchNotifications);
-    return () => window.removeEventListener(APP_REFRESH_EVENT, fetchNotifications);
-  }, [fetchNotifications]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -455,6 +467,7 @@ const Header = ({ onNotificationClick, onRewardNotificationClick, onSupportClick
   };
 
   const handleDeleteNotification = async (notificationId: string) => {
+    if (notifications.some(n => n.id === notificationId && !n.isRead)) setUnreadCount(count => Math.max(0, count - 1));
     setNotifications((prev) => prev.filter((notification) => notification.id !== notificationId));
     if (selectedNotification?.id === notificationId) {
       setSelectedNotification(null);
@@ -462,6 +475,7 @@ const Header = ({ onNotificationClick, onRewardNotificationClick, onSupportClick
     }
     try {
       await api.deleteNotification(notificationId);
+      notifyNotificationsChanged();
     } catch (error) {
       console.error('Failed to delete notification:', error);
       fetchNotifications();
@@ -474,6 +488,7 @@ const Header = ({ onNotificationClick, onRewardNotificationClick, onSupportClick
   };
 
   const handleNotificationItemClick = async (notification: Notification) => {
+    setSelectionScope(notificationScope);
     setNotificationDropdownOpen(false);
     let handled = false;
 
@@ -496,17 +511,18 @@ const Header = ({ onNotificationClick, onRewardNotificationClick, onSupportClick
     setNotifications((prev) =>
       prev.map((notif) => (notif.id === notification.id ? { ...notif, isRead: true } : notif))
     );
+    if (!notification.isRead) setUnreadCount(count => Math.max(0, count - 1));
 
     if (user) {
       try {
         await api.markNotificationAsRead(user.id, notification.id);
+        notifyNotificationsChanged();
       } catch (error) {
         console.error('Failed to mark notification as read:', error);
+        fetchNotifications();
       }
     }
   };
-
-  const unreadCount = notifications.filter((n) => !n.isRead).length;
 
   return (
     <header
@@ -528,22 +544,32 @@ const Header = ({ onNotificationClick, onRewardNotificationClick, onSupportClick
       {isMobileView ? (
         <div className="relative z-10 p-4">
           <div className="flex items-center justify-between">
-            <img
-              src="https://storage.googleapis.com/msgsndr/bsexF0htDBOfNeCh7844/media/6971f5bb4a646444cb4b5be4.png"
-              alt="Zea.Play"
-              className="h-12 w-auto scale-110 origin-left object-contain"
-            />
+            <Link
+              to="/dashboard"
+              aria-label="Go to dashboard"
+              title="Go to dashboard"
+              className="inline-flex rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-400"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              <img
+                src="https://storage.googleapis.com/msgsndr/bsexF0htDBOfNeCh7844/media/6971f5bb4a646444cb4b5be4.png"
+                alt="Zea.Play"
+                className="h-12 w-auto scale-110 origin-left object-contain"
+              />
+            </Link>
             <button
               type="button"
               ref={mobileMenuButtonRef}
               onClick={() => setMobileMenuOpen((prev) => !prev)}
-              className="zea-header-icon-button flex h-10 w-10 items-center justify-center"
-              aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
+              className="zea-header-icon-button relative flex h-10 w-10 items-center justify-center"
+              aria-label={`${mobileMenuOpen ? 'Close menu' : 'Open menu'}, ${unreadCount} unread notifications${unreadCount > 99 ? ', 99+ shown' : ''}`}
             >
               {mobileMenuOpen ? <XMarkIcon className="h-6 w-6" /> : <Bars3Icon className="h-6 w-6" />}
+              {unreadCount > 0 && <span aria-hidden="true" className="absolute -top-1 -right-1 rounded-full bg-red-600 px-1 text-[10px] text-white">{unreadCount > 99 ? '99+' : unreadCount}</span>}
             </button>
           </div>
 
+          <div className="mt-3 flex justify-end"><TaskActivityControl enabled={activityEnabled} socketStatus={taskSocket.status} /></div>
           {mobileMenuOpen && (
             <div
               ref={mobileMenuRef}
@@ -634,16 +660,19 @@ const Header = ({ onNotificationClick, onRewardNotificationClick, onSupportClick
               <div className="flex flex-wrap items-center gap-3">
                 <div className="relative" ref={notificationDropdownRef}>
                   <button
+                    aria-label={`Notifications, ${unreadCount} unread${unreadCount > 99 ? ', 99+ shown' : ''}`}
+                    aria-expanded={notificationDropdownOpen}
+                    aria-controls="header-notification-center"
                     onClick={() => setNotificationDropdownOpen(!notificationDropdownOpen)}
                     className="zea-header-icon-button p-2 relative"
                   >
                     <BellIcon className="h-6 w-6" />
                     {unreadCount > 0 && (
-                      <span className="zea-notification-dot absolute top-0 right-0 h-2 w-2 rounded-full"></span>
+                      <span aria-hidden="true" className="absolute -top-1 -right-1 rounded-full bg-red-600 px-1 text-[10px] text-white">{unreadCount > 99 ? '99+' : unreadCount}</span>
                     )}
                   </button>
                   {notificationDropdownOpen && (
-                    <div className="absolute right-0 mt-2 w-80 max-h-96 overflow-y-auto rounded-2xl border border-sky-400/40 bg-gradient-to-b from-slate-900/95 via-slate-900/90 to-slate-950/95 shadow-[0_20px_60px_rgba(56,189,248,0.25),0_0_0_1px_rgba(59,130,246,0.35),inset_0_0_0_1px_rgba(236,72,153,0.25)] backdrop-blur z-[80]">
+                    <div id="header-notification-center" role="region" aria-label="Notifications" className="absolute left-0 mt-2 w-80 max-w-[calc(100vw-2rem)] max-h-96 overflow-y-auto rounded-2xl border border-sky-400/40 bg-gradient-to-b from-slate-900/95 via-slate-900/90 to-slate-950/95 shadow-[0_20px_60px_rgba(56,189,248,0.25),0_0_0_1px_rgba(59,130,246,0.35),inset_0_0_0_1px_rgba(236,72,153,0.25)] backdrop-blur z-[80]">
                       <div className="p-3 border-b border-sky-400/30 flex justify-between items-center bg-gradient-to-r from-sky-500/10 via-fuchsia-500/10 to-indigo-500/10">
                         <h3 className="font-semibold text-text-primary">Notifications</h3>
                       </div>
@@ -651,9 +680,9 @@ const Header = ({ onNotificationClick, onRewardNotificationClick, onSupportClick
                         notifications.map((notif) => (
                           <div
                             key={notif.id}
-                            onClick={() => handleNotificationItemClick(notif)}
                             className="p-3 flex items-start gap-3 border-b border-sky-400/20 last:border-0 hover:bg-sky-500/10 cursor-pointer relative transition"
                           >
+                            <button type="button" onClick={() => handleNotificationItemClick(notif)} className="flex flex-1 items-start gap-3 text-left min-w-0">
                             {(() => {
                               const Icon = notificationIconMap[notif.type] ?? BellIcon;
                               const accent = notificationAccentMap[notif.type] ?? fallbackNotificationAccent;
@@ -674,6 +703,7 @@ const Header = ({ onNotificationClick, onRewardNotificationClick, onSupportClick
                               </p>
                               <p className="text-xs text-text-muted mt-1">{timeAgo(notif.createdAt)}</p>
                             </div>
+                            </button>
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -695,19 +725,14 @@ const Header = ({ onNotificationClick, onRewardNotificationClick, onSupportClick
 
                 <div className="relative" ref={profileDropdownRef}>
                   <button
+                    aria-label={`${user?.name ?? "User"} ${user?.role ?? ""}`}
+                    aria-expanded={profileDropdownOpen}
+                    aria-haspopup="menu"
                     onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
                     className="zea-header-profile-button flex items-center gap-2 p-2"
                   >
                     <div className="relative">
-                      {profileAvatar ? (
-                        <img
-                          src={profileAvatar}
-                          alt="Profile"
-                          className="h-8 w-8 rounded-full object-cover border-2 border-white/20"
-                        />
-                      ) : (
-                        <UserIcon className="h-8 w-8" />
-                      )}
+                      <Avatar user={user} className="h-8 w-8" />
                     </div>
                     <div className="flex flex-col items-start">
                       <span className="text-sm font-medium leading-tight">{user?.name}</span>
@@ -744,16 +769,22 @@ const Header = ({ onNotificationClick, onRewardNotificationClick, onSupportClick
         </div>
       ) : (
         <div className="relative z-10 flex items-center justify-between px-4 py-3">
-          <div className="flex items-center gap-3 lg:gap-4">
+          <Link
+            to="/dashboard"
+            aria-label="Go to dashboard"
+            title="Go to dashboard"
+            className="flex items-center gap-3 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-400 lg:gap-4"
+          >
             <img
               src="https://storage.googleapis.com/msgsndr/bsexF0htDBOfNeCh7844/media/6971f5bb4a646444cb4b5be4.png"
               alt="Zea.Play"
               className="h-10 w-auto scale-110 origin-left object-contain drop-shadow-[0_6px_20px_rgba(250,204,21,0.35)]"
             />
-          </div>
+          </Link>
 
       {/* RIGHT: TIME + DROPDOWNS */}
       <div className="flex items-center gap-3 lg:gap-4">
+        <TaskActivityControl enabled={activityEnabled} socketStatus={taskSocket.status} />
         {/* ⏰ Time, Country & Smart Clock Assistant */}
         <div className="flex items-center gap-3">
           <div className="zea-header-time-pill rounded-full px-3 py-1.5 font-mono text-sm tracking-[0.2em]">
@@ -817,26 +848,30 @@ const Header = ({ onNotificationClick, onRewardNotificationClick, onSupportClick
         {/* 💬 Chat */}
 
         {/* 🔔 Notifications */}
-        <button
+        {!navigationError && navigationPages.some(page => page.id === 'chat' && page.visible) && <button
           onClick={() => navigate('/chat')}
           className="zea-header-icon-button p-2"
           title="Open Chat"
+          aria-label="Open Chat"
         >
           <ChatBubbleOvalLeftEllipsisIcon className="h-5 w-5" />
-        </button>
+        </button>}
 
         <div className="relative" ref={notificationDropdownRef}>
           <button
-            onClick={() => setNotificationDropdownOpen(!notificationDropdownOpen)}
+            aria-label={`Notifications, ${unreadCount} unread${unreadCount > 99 ? ', 99+ shown' : ''}`}
+            aria-expanded={notificationDropdownOpen}
+            aria-controls="header-notification-center"
+                    onClick={() => setNotificationDropdownOpen(!notificationDropdownOpen)}
             className="zea-header-icon-button relative p-2"
           >
             <BellIcon className="h-5 w-5" />
             {unreadCount > 0 && (
-              <span className="zea-notification-dot absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full"></span>
+              <span aria-hidden="true" className="absolute -top-1 -right-1 rounded-full bg-red-600 px-1 text-[10px] text-white">{unreadCount > 99 ? '99+' : unreadCount}</span>
             )}
           </button>
           {notificationDropdownOpen && (
-            <div className="absolute right-0 mt-2 w-80 max-h-96 overflow-y-auto rounded-2xl border border-sky-400/40 bg-gradient-to-b from-slate-900/95 via-slate-900/90 to-slate-950/95 shadow-[0_20px_60px_rgba(56,189,248,0.25),0_0_0_1px_rgba(59,130,246,0.35),inset_0_0_0_1px_rgba(236,72,153,0.25)] backdrop-blur z-[80]">
+            <div id="header-notification-center" role="region" aria-label="Notifications" className="absolute right-0 mt-2 w-80 max-h-96 overflow-y-auto rounded-2xl border border-sky-400/40 bg-gradient-to-b from-slate-900/95 via-slate-900/90 to-slate-950/95 shadow-[0_20px_60px_rgba(56,189,248,0.25),0_0_0_1px_rgba(59,130,246,0.35),inset_0_0_0_1px_rgba(236,72,153,0.25)] backdrop-blur z-[80]">
               <div className="p-3 border-b border-sky-400/30 flex justify-between items-center bg-gradient-to-r from-sky-500/10 via-fuchsia-500/10 to-indigo-500/10">
                 <h3 className="font-semibold text-text-primary">Notifications</h3>
               </div>
@@ -844,9 +879,9 @@ const Header = ({ onNotificationClick, onRewardNotificationClick, onSupportClick
                 notifications.map((notif) => (
                   <div
                     key={notif.id}
-                    onClick={() => handleNotificationItemClick(notif)}
                     className="p-3 flex items-start gap-3 border-b border-sky-400/20 last:border-0 hover:bg-sky-500/10 cursor-pointer relative transition"
                   >
+                    <button type="button" onClick={() => handleNotificationItemClick(notif)} className="flex flex-1 items-start gap-3 text-left min-w-0">
                     {(() => {
                       const Icon = notificationIconMap[notif.type] ?? BellIcon;
                       const accent = notificationAccentMap[notif.type] ?? fallbackNotificationAccent;
@@ -867,6 +902,7 @@ const Header = ({ onNotificationClick, onRewardNotificationClick, onSupportClick
                       </p>
                       <p className="text-xs text-text-muted mt-1">{timeAgo(notif.createdAt)}</p>
                     </div>
+                    </button>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -889,19 +925,14 @@ const Header = ({ onNotificationClick, onRewardNotificationClick, onSupportClick
         {/* 👤 Profile */}
         <div className="relative" ref={profileDropdownRef}>
           <button
-            onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
+            aria-label={`${user?.name ?? "User"} ${user?.role ?? ""}`}
+                    aria-expanded={profileDropdownOpen}
+                    aria-haspopup="menu"
+                    onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
             className="zea-header-profile-button flex items-center gap-2 px-2 py-1.5"
           >
             <div className="relative">
-              {profileAvatar ? (
-                <img
-                  src={profileAvatar}
-                  alt="Profile"
-                  className="zea-header-avatar h-8 w-8 rounded-full object-cover"
-                />
-              ) : (
-                <UserIcon className="h-8 w-8" />
-              )}
+              <Avatar user={user} className="h-8 w-8" />
             </div>
             <div className="flex flex-col items-start">
               <span className="text-sm font-semibold leading-tight">{user?.name}</span>
@@ -936,8 +967,8 @@ const Header = ({ onNotificationClick, onRewardNotificationClick, onSupportClick
         </div>
       )}
       <NotificationDetailModal
-        notification={selectedNotification}
-        isOpen={notificationPreviewOpen}
+        notification={selectionScope === notificationScope ? selectedNotification : null}
+        isOpen={notificationPreviewOpen && selectionScope === notificationScope}
         onClose={closeNotificationPreview}
       />
       <GlobalProgressBar />

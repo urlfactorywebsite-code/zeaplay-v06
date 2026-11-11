@@ -1,0 +1,315 @@
+{
+  "passed": 77,
+  "failed": 0,
+  "results": [
+    {
+      "name": "Settings default opens existing Profile",
+      "status": "PASS"
+    },
+    {
+      "name": "One sidebar Settings entry, no former entries or dropdown",
+      "status": "PASS"
+    },
+    {
+      "name": "Unvisited Settings modules do not fetch data",
+      "status": "PASS"
+    },
+    {
+      "name": "General / Profile tab navigation and sidebar highlight",
+      "status": "PASS"
+    },
+    {
+      "name": "Support tab navigation and sidebar highlight",
+      "status": "PASS"
+    },
+    {
+      "name": "Master Control tab navigation and sidebar highlight",
+      "status": "PASS"
+    },
+    {
+      "name": "API tab navigation and sidebar highlight",
+      "status": "PASS"
+    },
+    {
+      "name": "Logs tab navigation and sidebar highlight",
+      "status": "PASS"
+    },
+    {
+      "name": "Media Library tab navigation and sidebar highlight",
+      "status": "PASS"
+    },
+    {
+      "name": "Sidebar Management tab navigation and sidebar highlight",
+      "status": "PASS"
+    },
+    {
+      "name": "Back and forward preserve selected tab",
+      "status": "PASS"
+    },
+    {
+      "name": "Changing Settings tabs preserves the surrounding application layout",
+      "status": "PASS"
+    },
+    {
+      "name": "General / Profile direct deep link and refresh",
+      "status": "PASS"
+    },
+    {
+      "name": "Support direct deep link and refresh",
+      "status": "PASS"
+    },
+    {
+      "name": "Master Control direct deep link and refresh",
+      "status": "PASS"
+    },
+    {
+      "name": "API direct deep link and refresh",
+      "status": "PASS"
+    },
+    {
+      "name": "Logs direct deep link and refresh",
+      "status": "PASS"
+    },
+    {
+      "name": "Media Library direct deep link and refresh",
+      "status": "PASS"
+    },
+    {
+      "name": "Sidebar Management direct deep link and refresh",
+      "status": "PASS"
+    },
+    {
+      "name": "Legacy /profile preserves query, anchor and state",
+      "status": "PASS"
+    },
+    {
+      "name": "Legacy /support preserves query, anchor and state",
+      "status": "PASS"
+    },
+    {
+      "name": "Legacy /master-control preserves query, anchor and state",
+      "status": "PASS"
+    },
+    {
+      "name": "Legacy /api/overview preserves query, anchor and state",
+      "status": "PASS"
+    },
+    {
+      "name": "Legacy /logs preserves query, anchor and state",
+      "status": "PASS"
+    },
+    {
+      "name": "Legacy /media preserves query, anchor and state",
+      "status": "PASS"
+    },
+    {
+      "name": "Keyboard arrow, Home, End, Space and Enter navigation",
+      "status": "PASS"
+    },
+    {
+      "name": "Unsaved profile edits survive cancelled tab navigation",
+      "status": "PASS"
+    },
+    {
+      "name": "Unsaved Support drafts survive cancelled browser Back and sidebar navigation",
+      "status": "PASS"
+    },
+    {
+      "name": "Collapsed sidebar Settings has an accessible name and active state",
+      "status": "PASS"
+    },
+    {
+      "name": "Existing profile save keeps its API contract",
+      "status": "PASS"
+    },
+    {
+      "name": "Existing password mismatch validation blocks API calls",
+      "status": "PASS"
+    },
+    {
+      "name": "AI assistant uses the authenticated backend without provider keys in the browser payload",
+      "status": "PASS"
+    },
+    {
+      "name": "Support submits through existing form with intercepted webhook",
+      "status": "PASS"
+    },
+    {
+      "name": "Master Control saves through existing feature flag API",
+      "status": "PASS"
+    },
+    {
+      "name": "API documentation and webhooks reuse existing views",
+      "status": "PASS"
+    },
+    {
+      "name": "SMTP configuration create, edit, test and delete preserve contracts without displaying saved passwords",
+      "status": "PASS"
+    },
+    {
+      "name": "Integration drafts block inner-tab changes until discarded",
+      "status": "PASS"
+    },
+    {
+      "name": "OAuth configuration create, rotate, delete and explicit credential reveal work",
+      "status": "PASS"
+    },
+    {
+      "name": "Bearer history survives reload within its account session without localStorage secrets",
+      "status": "PASS"
+    },
+    {
+      "name": "Owner can update the server AI provider key without prefilled or cached credentials",
+      "status": "PASS"
+    },
+    {
+      "name": "Avatar crop callback, dialog focus and finalize API work without overwriting profile edits",
+      "status": "PASS"
+    },
+    {
+      "name": "Logs filters retain existing API calls",
+      "status": "PASS"
+    },
+    {
+      "name": "Media preview, search and upload keep existing APIs",
+      "status": "PASS"
+    },
+    {
+      "name": "390px mobile/tablet Settings navigation and no page overflow",
+      "status": "PASS"
+    },
+    {
+      "name": "768px mobile/tablet Settings navigation and no page overflow",
+      "status": "PASS"
+    },
+    {
+      "name": "user sees only authorized Settings tabs",
+      "status": "PASS"
+    },
+    {
+      "name": "user retains Media access without delete controls and its existing Logs access",
+      "status": "PASS"
+    },
+    {
+      "name": "user blocked from direct master-control route before privileged requests",
+      "status": "PASS"
+    },
+    {
+      "name": "user blocked from direct api route before privileged requests",
+      "status": "PASS"
+    },
+    {
+      "name": "user blocked from direct logs route before privileged requests",
+      "status": "PASS"
+    },
+    {
+      "name": "manager sees only authorized Settings tabs",
+      "status": "PASS"
+    },
+    {
+      "name": "manager retains Media access without delete controls and its existing Logs access",
+      "status": "PASS"
+    },
+    {
+      "name": "manager blocked from direct master-control route before privileged requests",
+      "status": "PASS"
+    },
+    {
+      "name": "manager blocked from direct api route before privileged requests",
+      "status": "PASS"
+    },
+    {
+      "name": "admin sees only authorized Settings tabs",
+      "status": "PASS"
+    },
+    {
+      "name": "admin retains Media access without delete controls and its existing Logs access",
+      "status": "PASS"
+    },
+    {
+      "name": "admin blocked from direct master-control route before privileged requests",
+      "status": "PASS"
+    },
+    {
+      "name": "Existing tenant/account preferences migrate without overwriting their source",
+      "status": "PASS"
+    },
+    {
+      "name": "Personal rename and keyboard reorder save without changing organization policy",
+      "status": "PASS"
+    },
+    {
+      "name": "Sidebar editor dirty drafts block tab changes and browser Back",
+      "status": "PASS"
+    },
+    {
+      "name": "Drag handle reorders pages and persists after save",
+      "status": "PASS"
+    },
+    {
+      "name": "Nested Settings labels and order use personal preferences",
+      "status": "PASS"
+    },
+    {
+      "name": "Empty names prevent save and search disables reordering",
+      "status": "PASS"
+    },
+    {
+      "name": "Protected pages and forbidden role options cannot be changed in the editor",
+      "status": "PASS"
+    },
+    {
+      "name": "Main and nested modules save only after high-impact confirmation",
+      "status": "PASS"
+    },
+    {
+      "name": "Reset Defaults restores availability and personal layout without expanding permissions",
+      "status": "PASS"
+    },
+    {
+      "name": "Hidden navigation preserves independently authorized direct access",
+      "status": "PASS"
+    },
+    {
+      "name": "A concurrent save reports conflict and preserves the local draft",
+      "status": "PASS"
+    },
+    {
+      "name": "Active sessions revalidate on focus and leave newly disabled pages",
+      "status": "PASS"
+    },
+    {
+      "name": "Unavailable global policy fails closed with a working Retry action",
+      "status": "PASS"
+    },
+    {
+      "name": "Admin editor preserves Owner-only policy controls",
+      "status": "PASS"
+    },
+    {
+      "name": "Sidebar Management remains usable at 390px",
+      "status": "PASS"
+    },
+    {
+      "name": "Sidebar Management remains usable at 1440px",
+      "status": "PASS"
+    },
+    {
+      "name": "Media error state remains inside Settings shell",
+      "status": "PASS"
+    },
+    {
+      "name": "Logout remains accessible through the existing header account menu",
+      "status": "PASS"
+    },
+    {
+      "name": "Signed-out deep links and legacy administrative URLs require login",
+      "status": "PASS"
+    },
+    {
+      "name": "No uncaught browser errors",
+      "status": "PASS"
+    }
+  ],
+  "pageErrors": []
+}

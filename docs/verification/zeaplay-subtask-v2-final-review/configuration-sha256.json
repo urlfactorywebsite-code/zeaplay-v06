@@ -1,0 +1,9 @@
+{
+  "docker-compose.yml": "73eeed6d90d83eff131dfe3491aa32e2bd2c58a365f88100f6e8ff053097423d",
+  "docker-compose.prod.yml": "c3759be247169e7ee96a1fa35919fdbec0f1f0b95c5d55b86f39a30dcd98d7b8",
+  "docker-compose.github.yml": "9a4f09377656232f0d582f9ff0b376b6b45d65b2c8d2eee1c692bb0c9541f731",
+  "backend/Dockerfile": "931730620b593e12dc2a67e75dce65e5d28a3c53d52d27b7e04a0bb1ca1eb2c2",
+  "frontend/Dockerfile": "d3340682bfab89765ab9d79aaa0bc0804da09560b74706154d4b9fedb793f1b5",
+  "frontend/package-lock.json": "2bd6ac72d8d8014d304744bb7be86e10fcafd4fc2690f7b123781753849578a3",
+  "backend/requirements.txt": "5f916143fe351e401ef935bfd95ea55974390659abd0d4aa0f56f02c43dd0fa5"
+}

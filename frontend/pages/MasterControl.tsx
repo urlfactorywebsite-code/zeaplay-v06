@@ -1,29 +1,11 @@
+import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import React, { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth, useTheme } from '../hooks/useAuth';
 import api from '../services/mockApi';
 import type { FeatureFlag, FeatureFlagUpdate } from '../types';
 
 const DEFAULT_FLAGS: FeatureFlag[] = [
-  { key: 'page.dashboard', label: 'Dashboard Page', group: 'Pages', description: 'Show the dashboard page.', enabled: true },
-  { key: 'page.tasks', label: 'Tasks Page', group: 'Pages', description: 'Show the task list page.', enabled: true },
-  { key: 'page.kanban', label: 'Kanban Board Page', group: 'Pages', description: 'Show the kanban board.', enabled: true },
-  { key: 'page.calendar', label: 'Calendar Page', group: 'Pages', description: 'Show the calendar view.', enabled: true },
-  { key: 'page.gantt', label: 'Gantt Page', group: 'Pages', description: 'Show the gantt chart.', enabled: true },
-  { key: 'page.reports', label: 'Reports Page', group: 'Pages', description: 'Show the reports hub.', enabled: true },
-  { key: 'page.logs', label: 'Logs Page', group: 'Pages', description: 'Show system logs.', enabled: true },
-  { key: 'page.media', label: 'Media Library Page', group: 'Pages', description: 'Show the media library.', enabled: true },
-  { key: 'page.tool_library', label: 'Tool Library Page', group: 'Pages', description: 'Show the tool library.', enabled: true },
-  { key: 'page.tickets', label: 'Tickets Page', group: 'Pages', description: 'Show ticket management.', enabled: true },
-  { key: 'page.chat', label: 'Chat Page', group: 'Pages', description: 'Show chat module.', enabled: true },
-  { key: 'page.achievements', label: 'Achievements Page', group: 'Pages', description: 'Show achievements.', enabled: true },
-  { key: 'page.levels', label: 'Levels Page', group: 'Pages', description: 'Show levels manager.', enabled: true },
-  { key: 'page.rewards', label: 'Rewards Page', group: 'Pages', description: 'Show rewards hub.', enabled: true },
-  { key: 'page.points_table', label: 'Points Table Page', group: 'Pages', description: 'Show points table.', enabled: true },
-  { key: 'page.template_editor', label: 'Template Editor Page', group: 'Pages', description: 'Show template editor.', enabled: true },
-  { key: 'page.api_overview', label: 'API Overview Page', group: 'Pages', description: 'Show API overview.', enabled: true },
-  { key: 'page.users_admin', label: 'Users Admin Page', group: 'Pages', description: 'Show user administration.', enabled: true },
-  { key: 'page.settings', label: 'Settings Page', group: 'Pages', description: 'Show settings page.', enabled: true },
-  { key: 'page.master_control', label: 'Master Control Page', group: 'Pages', description: 'Show master control.', enabled: true },
   { key: 'tasks.create', label: 'Create Tasks', group: 'Tasks', description: 'Allow creating new tasks.', enabled: true },
   { key: 'tasks.edit', label: 'Edit Tasks', group: 'Tasks', description: 'Allow editing tasks.', enabled: true },
   { key: 'tasks.delete', label: 'Delete Tasks', group: 'Tasks', description: 'Allow deleting tasks.', enabled: true },
@@ -100,6 +82,7 @@ const MasterControl: React.FC = () => {
   const [search, setSearch] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
+  useUnsavedChanges(isSaving);
 
   const resolvedTheme = theme === 'system' ? 'dark' : theme;
   const isLight = resolvedTheme === 'light';
@@ -124,7 +107,7 @@ const MasterControl: React.FC = () => {
   }, []);
 
   const groupedFlags = useMemo(() => {
-    const list = flags.length ? flags : DEFAULT_FLAGS;
+    const list = (flags.length ? flags : DEFAULT_FLAGS).filter(flag => !flag.key.startsWith('page.'));
     const normalizedSearch = search.trim().toLowerCase();
     const filtered = normalizedSearch
       ? list.filter(
@@ -196,7 +179,7 @@ const MasterControl: React.FC = () => {
             <p className={`text-[10px] uppercase tracking-[0.5em] ${textMuted}`}>Master Control</p>
             <h1 className={`text-2xl font-semibold ${headerClass}`}>Feature Gatekeeper</h1>
             <p className={`text-sm ${textMuted}`}>
-              Toggle every module, page, and permission by plan.
+              Configure existing feature flags. Page availability and role visibility are managed in <Link to="/settings/sidebar-management" className="underline">Sidebar Management</Link>.
             </p>
           </div>
           <div className="flex flex-col gap-2 md:items-end">
@@ -236,6 +219,8 @@ const MasterControl: React.FC = () => {
                     onClick={() => handleToggle(flag)}
                     className={`relative h-6 w-12 rounded-full border ${toggleClasses} transition`}
                     aria-pressed={flag.enabled}
+                    aria-label={flag.label}
+                    disabled={isSaving}
                   >
                     <span
                       className={`absolute left-1 top-1 h-4 w-4 rounded-full bg-white transition ${

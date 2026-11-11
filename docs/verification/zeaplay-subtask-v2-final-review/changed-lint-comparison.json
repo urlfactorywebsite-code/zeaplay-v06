@@ -1,0 +1,36 @@
+{
+  "backend/app/cache.py": {
+    "prior_fixture": {
+      "UP035": 1,
+      "I001": 1,
+      "UP045": 4
+    },
+    "current": {}
+  },
+  "backend/app/routers/tasks.py": {
+    "prior_fixture": {
+      "I001": 1,
+      "UP035": 1,
+      "BLE001": 2,
+      "UP006": 26,
+      "UP045": 61,
+      "DTZ001": 4,
+      "DTZ003": 21,
+      "B008": 70,
+      "SIM102": 4,
+      "S110": 1
+    },
+    "current": {
+      "I001": 1,
+      "UP035": 1,
+      "BLE001": 2,
+      "UP006": 26,
+      "UP045": 61,
+      "DTZ001": 4,
+      "DTZ003": 21,
+      "B008": 70,
+      "SIM102": 4,
+      "S110": 1
+    }
+  }
+}

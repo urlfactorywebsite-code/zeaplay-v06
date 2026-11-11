@@ -1,35 +1,14 @@
-﻿import React, { useEffect, useRef, useState } from 'react';
+import { releaseVersionLabel } from '../utils/appVersion';
+import React, { useEffect, useState } from 'react';
 
-import { NavLink, NavLinkProps } from 'react-router-dom';
-import { Menu, PanelLeftClose } from 'lucide-react';
+import { NavLink } from 'react-router-dom';
+import { Menu, PanelLeftClose, Settings as SettingsIcon } from 'lucide-react';
 
-import { useAuth, useTheme } from '../hooks/useAuth';
-import { getUserAvatarUrl } from '../utils/userAvatar';
-
-import { Role } from '../types';
-
-import {
-    ChartPieIcon,
-    CodeBracketSquareIcon,
-    UserCircleIcon,
-    ChatBubbleLeftEllipsisIcon,
-    ChatBubbleOvalLeftEllipsisIcon,
-} from './icons';
-
-
-
-type SidebarLink = {
-
-    to: NavLinkProps['to'];
-
-    icon: React.ReactNode;
-
-    label: string;
-
-};
+import { useTheme } from '../hooks/useAuth';
+import { useNavigation } from '../hooks/useNavigation';
+import { navigationIcons } from '../utils/navigationIcons';
 
 interface SidebarProps {
-  onSupportClick: () => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
   onVersionClick: () => void;
@@ -47,37 +26,12 @@ const THEME_ICON_URLS: Record<ThemeKey, string> = {
 };
 
 
-const linkKey = (link: SidebarLink) => {
+const Sidebar: React.FC<SidebarProps> = ({ isCollapsed, onToggleCollapse, onVersionClick, versionLabel }) => {
 
-    const destination = link.to;
-
-    if (typeof destination === 'string') {
-
-        return destination;
-
-    }
-
-    const pathname = destination.pathname ?? '';
-
-    const search = destination.search ?? '';
-
-    const hash = destination.hash ?? '';
-
-    return `${pathname}${search}${hash}`;
-
-};
-
-
-
-const Sidebar: React.FC<SidebarProps> = ({ onSupportClick, isCollapsed, onToggleCollapse, onVersionClick, versionLabel }) => {
-
-    const { user } = useAuth();
+    const { pages, error } = useNavigation();
     const { theme, setTheme } = useTheme();
     const [resolvedTheme, setResolvedTheme] = useState<ThemeKey>('light');
-    const [isDropupOpen, setDropupOpen] = useState(false);
-    const displayVersionLabel = versionLabel ?? '2026 Zea.Play V1.2.1';
-    const profileAvatar = getUserAvatarUrl(user);
-    const dropupRef = useRef<HTMLDivElement | null>(null);
+    const displayVersionLabel = releaseVersionLabel(versionLabel);
 
 
 
@@ -101,211 +55,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onSupportClick, isCollapsed, onToggle
     const themeLabel =
         activeTheme === 'dark' ? 'Dark Mode' : activeTheme === 'light' ? 'Light Mode' : 'Colorful Mode';
 
-    useEffect(() => {
-        if (!isDropupOpen) return;
-        const handleClickOutside = (event: MouseEvent) => {
-            if (!dropupRef.current || dropupRef.current.contains(event.target as Node)) {
-                return;
-            }
-            setDropupOpen(false);
-        };
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, [isDropupOpen]);
-
-
-
-    const commonLinks: SidebarLink[] = [
-        {
-            to: '/dashboard',
-            icon: (
-                <img
-                    src="https://res.cloudinary.com/dqhcbck76/image/upload/v1770241422/dashboard_pvjlbg.png"
-                    alt="Dashboard"
-                    className="h-6 w-6 object-contain"
-                />
-            ),
-            label: 'Dashboard',
-        },
-        {
-            to: '/tasks',
-            icon: (
-                <img
-                    src="https://res.cloudinary.com/dqhcbck76/image/upload/v1770241423/task-actions_urhfeq.png"
-                    alt="All Tasks"
-                    className="h-6 w-6 object-contain"
-                />
-            ),
-            label: 'All Tasks',
-        },
-        {
-            to: '/kanban',
-            icon: (
-                <img
-                    src="https://res.cloudinary.com/dqhcbck76/image/upload/v1770241422/kanban_ysnojm.png"
-                    alt="Kanban Board"
-                    className="h-6 w-6 object-contain"
-                />
-            ),
-            label: 'Kanban Board',
-        },
-        {
-            to: '/tickets',
-            icon: (
-                <img
-                    src="https://res.cloudinary.com/dqhcbck76/image/upload/v1770343495/support-ticket_fku5gp.png"
-                    alt="Ticket"
-                    className="h-6 w-6 object-contain"
-                />
-            ),
-            label: 'Ticket',
-        },
-        {
-            to: '/calendar',
-            icon: (
-                <img
-                    src="https://res.cloudinary.com/dqhcbck76/image/upload/v1770241422/calendar_xbhksz.png"
-                    alt="Calendar"
-                    className="h-6 w-6 object-contain"
-                />
-            ),
-            label: 'Calendar',
-        },
-        {
-            to: '/media',
-            icon: (
-                <img
-                    src="https://res.cloudinary.com/dqhcbck76/image/upload/v1770241422/Media_Library_em2ky8.png"
-                    alt="Media Library"
-                    className="h-6 w-6 object-contain"
-                />
-            ),
-            label: 'Media Library',
-        },
-        {
-            to: '/tool-library',
-            icon: (
-                <img
-                    src="https://res.cloudinary.com/dqhcbck76/image/upload/v1770623739/open-box_ljkslo.png"
-                    alt="Tool Library"
-                    className="h-6 w-6 object-contain"
-                />
-            ),
-            label: 'Tool Library',
-        },
-    ];
-
-
-
-    const adminLinks: SidebarLink[] = [
-        {
-            to: '/admin/users',
-            icon: (
-                <img
-                    src="https://res.cloudinary.com/dqhcbck76/image/upload/v1770241423/Users_b58wty.png"
-                    alt="Users"
-                    className="h-6 w-6 object-contain"
-                />
-            ),
-            label: 'Users',
-        },
-        {
-            to: '/gantt',
-            icon: (
-                <img
-                    src="https://res.cloudinary.com/dqhcbck76/image/upload/v1770343495/gantt-chart_gjwr5s.png"
-                    alt="Gantt Chart"
-                    className="h-6 w-6 object-contain"
-                />
-            ),
-            label: 'Gantt Chart',
-        },
-        {
-            to: '/reports',
-            icon: (
-                <img
-                    src="https://res.cloudinary.com/dqhcbck76/image/upload/v1770343494/report_boqlo0.png"
-                    alt="Reports"
-                    className="h-6 w-6 object-contain"
-                />
-            ),
-            label: 'Reports',
-        },
-        {
-            to: '/logs',
-            icon: (
-                <img
-                    src="https://res.cloudinary.com/dqhcbck76/image/upload/v1770623653/log_cbtgmr.png"
-                    alt="Logs"
-                    className="h-6 w-6 object-contain"
-                />
-            ),
-            label: 'Logs',
-        },
-    ];
-
-
-
-    const getNavLinks = () => {
-
-        let links: SidebarLink[] = [...commonLinks];
-
-
-
-        if (user?.role === Role.MANAGER || user?.role === Role.ADMIN || user?.role === Role.OWNER) {
-
-            links = [...links, ...adminLinks];
-
-        }
-
-
-
-        links.push({
-            to: '/achievements',
-            icon: (
-                <img
-                    src="https://res.cloudinary.com/dqhcbck76/image/upload/v1770241421/achivement_ckvs6i.png"
-                    alt="Achievements"
-                    className="h-6 w-6 object-contain"
-                />
-            ),
-            label: 'Achievements',
-        });
-
-        if (user?.role === Role.OWNER) {
-            links.push({
-                to: '/api/overview',
-                icon: (
-                    <img
-                        src="https://res.cloudinary.com/dqhcbck76/image/upload/v1770241421/api_bhcggn.png"
-                        alt="API"
-                        className="h-6 w-6 object-contain"
-                    />
-                ),
-                label: 'API',
-            });
-        }
-        const seen = new Set<string>();
-
-        return links.filter((link) => {
-
-            const key = linkKey(link);
-
-            if (seen.has(key)) {
-
-                return false;
-
-            }
-
-            seen.add(key);
-
-            return true;
-
-        });
-
-    };
-
-
+    const links = error ? [] : pages.filter(page => page.navigationLocation === 'sidebar' && page.desktop && page.visible);
 
     const navLinkClass = ({ isActive }: { isActive: boolean }) =>
         `sidebar-link flex items-center ${isCollapsed ? 'justify-center px-2' : 'space-x-3 px-4'} py-3 rounded-lg transition-all duration-300 ease-in-out ${
@@ -362,93 +112,30 @@ const Sidebar: React.FC<SidebarProps> = ({ onSupportClick, isCollapsed, onToggle
             )}
             <nav className={`flex-1 min-h-0 ${isCollapsed ? 'px-2 pt-16 pb-4' : 'px-4 pt-2 pb-6'} space-y-2 overflow-auto scrollbar-hide`} style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
                 <style>{`nav::-webkit-scrollbar { display: none; }`}</style>
-                {getNavLinks().map((link) => (
+                {links.map((link) => (
                     <NavLink
-                        key={linkKey(link)}
-                        to={link.to}
+                        key={link.id}
+                        to={link.route}
                         className={navLinkClass}
                         title={isCollapsed ? link.label : undefined}
+                        aria-label={link.label}
                     >
-                        <span>{link.icon}</span>
+                        <span>{link.id === 'settings' ? <SettingsIcon className="h-6 w-6" aria-hidden="true" /> : <img src={navigationIcons[link.icon]} alt="" className="h-6 w-6 object-contain" />}</span>
                         {!isCollapsed && <span>{link.label}</span>}
                     </NavLink>
                 ))}
             </nav>
 
             {!isCollapsed && (
-            <div className="relative mt-auto px-4 py-3 border-t border-gray-200 dark:border-gray-900 text-sm" ref={dropupRef}>
-                {isDropupOpen && (
-                    <div className="absolute left-0 bottom-12 z-20 w-56 overflow-hidden rounded-2xl border border-sky-300/40 bg-slate-950/95 text-slate-100 shadow-[0_18px_40px_rgba(2,6,23,0.6)]">
-                        <NavLink
-                            to="/settings"
-                            className="flex items-center gap-3 px-4 py-3 text-sm font-semibold transition hover:bg-white/10"
-                            onClick={() => setDropupOpen(false)}
-                        >
-                            {profileAvatar ? (
-                                <img
-                                    src={profileAvatar}
-                                    alt={user?.name ? `${user.name} profile` : 'Profile'}
-                                    className="h-7 w-7 rounded-full object-cover"
-                                />
-                            ) : (
-                                <img
-                                    src="https://res.cloudinary.com/dqhcbck76/image/upload/v1770343495/avatar-design_p5updr.png"
-                                    alt="Profile"
-                                    className="h-6 w-6 object-contain"
-                                />
-                            )}
-                            <span>Profile</span>
-                        </NavLink>
-                        <button
-                            type="button"
-                            onClick={() => {
-                                onSupportClick();
-                                setDropupOpen(false);
-                            }}
-                            className="flex w-full items-center gap-3 px-4 py-3 text-sm font-semibold transition hover:bg-white/10"
-                        >
-                            <img
-                                src="https://res.cloudinary.com/dqhcbck76/image/upload/v1770241422/customer-service_cra3yp.png"
-                                alt="Support"
-                                className="h-6 w-6 object-contain"
-                            />
-                            <span>Support</span>
-                        </button>
-                        {user?.role === Role.OWNER && (
-                            <NavLink
-                                to="/master-control"
-                                className="flex items-center gap-3 px-4 py-3 text-sm font-semibold transition hover:bg-white/10"
-                                onClick={() => setDropupOpen(false)}
-                            >
-                                <img
-                                    src="https://res.cloudinary.com/dqhcbck76/image/upload/v1770241421/api_bhcggn.png"
-                                    alt="Master Control"
-                                    className="h-6 w-6 object-contain"
-                                />
-                                <span>Master Control</span>
-                            </NavLink>
-                        )}
-                    </div>
-                )}
-                <div className="flex items-center justify-between gap-3">
-                    <button
-                        type="button"
-                        onClick={onVersionClick}
-                        className="text-gray-400 hover:text-gray-200 transition"
-                        aria-label="Open release notes"
-                    >
-                        Â© {displayVersionLabel}
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setDropupOpen((prev) => !prev)}
-                        className="flex h-8 w-8 items-center justify-center rounded-full border border-sky-300/60 bg-slate-950/90 text-sky-100 shadow-[0_0_12px_rgba(56,189,248,0.35)] transition hover:scale-105 hover:border-sky-200/80 hover:text-white"
-                        aria-expanded={isDropupOpen}
-                        aria-label="Open sidebar menu"
-                    >
-                        <span className={`text-xs font-semibold transition ${isDropupOpen ? 'rotate-180' : ''}`}>{'^'}</span>
-                    </button>
-                </div>
+            <div className="mt-auto px-4 py-3 border-t border-gray-200 dark:border-gray-900 text-sm">
+                <button
+                    type="button"
+                    onClick={onVersionClick}
+                    className="text-gray-400 hover:text-gray-200 transition"
+                    aria-label="Open release notes"
+                >
+                    &copy; {displayVersionLabel}
+                </button>
             </div>
             )}
 

@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { plannedDatesError } from '../utils/subtaskWorkflow';
 import { TaskTemplate, TaskTemplateAssignmentType, TaskTemplateAssignRequest, TaskPriority, User, Department, RecurrenceRule, Role } from '../types';
 import { useAuth } from '../hooks/useAuth';
 import api from '../services/mockApi';
@@ -115,6 +116,8 @@ const TaskTemplateModal: React.FC<TaskTemplateModalProps> = ({ isOpen, onClose, 
   const [users, setUsers] = useState<User[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(false);
+  const assignmentPending = useRef(false);
+  const [assigning, setAssigning] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<TaskTemplate | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [showAssign, setShowAssign] = useState(false);
@@ -298,8 +301,13 @@ const TaskTemplateModal: React.FC<TaskTemplateModalProps> = ({ isOpen, onClose, 
 
   const handleAssignSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!assigningTemplate) return;
-
+    if (!assigningTemplate || assignmentPending.current) return;
+    const planError = assigningTemplate.subtasks.length ? plannedDatesError(assignData.plannedStartDate, assignData.plannedEndDate) : '';
+    if (planError) {
+      alert(planError);
+      return;
+    }
+    assignmentPending.current = true; setAssigning(true);
     try {
       await api.assignTaskTemplate(assigningTemplate.id, assignData);
       setShowAssign(false);
@@ -308,7 +316,9 @@ const TaskTemplateModal: React.FC<TaskTemplateModalProps> = ({ isOpen, onClose, 
       alert('Template assigned successfully');
     } catch (error) {
       console.error('Failed to assign template:', error);
-      alert('Failed to assign template');
+      alert(error instanceof Error ? error.message : 'Failed to assign template');
+    } finally {
+      assignmentPending.current = false; setAssigning(false);
     }
   };
 
@@ -855,6 +865,10 @@ const TaskTemplateModal: React.FC<TaskTemplateModalProps> = ({ isOpen, onClose, 
 
               <div className="relative flex-1 overflow-y-auto custom-scrollbar px-6 py-6">
                 <form onSubmit={handleAssignSubmit} className="space-y-5 pb-4">
+                  {assigningTemplate.subtasks.length > 0 && <div className="grid grid-cols-2 gap-3">
+                    <label className={labelClass}>Subtasks planned start *<input type="date" required value={assignData.plannedStartDate || ''} onChange={e => setAssignData(prev => ({ ...prev, plannedStartDate:e.target.value }))} className={inputClass} /></label>
+                    <label className={labelClass}>Subtasks planned end *<input type="date" required min={assignData.plannedStartDate || undefined} value={assignData.plannedEndDate || ''} onChange={e => setAssignData(prev => ({ ...prev, plannedEndDate:e.target.value }))} className={inputClass} /></label>
+                  </div>}
                   <section className={sectionClass}>
                     <p className="text-sm modal-muted">Choose who should receive this mission.</p>
                     <div className="mt-3 flex flex-wrap gap-2">
@@ -946,8 +960,8 @@ const TaskTemplateModal: React.FC<TaskTemplateModalProps> = ({ isOpen, onClose, 
                     >
                       Cancel
                     </button>
-                    <button type="submit" className="modal-primary-button px-6 py-2 text-sm font-semibold">
-                      Assign Template
+                    <button type="submit" disabled={assigning} className="modal-primary-button px-6 py-2 text-sm font-semibold">
+                      {assigning ? 'Assigning…' : 'Assign Template'}
                     </button>
                   </div>
                 </form>

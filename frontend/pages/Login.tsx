@@ -1,3 +1,4 @@
+import { APP_DISPLAY_NAME } from '../utils/appVersion';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth, useTheme } from '../hooks/useAuth';
@@ -192,7 +193,7 @@ const Login: React.FC = () => {
                         <div>
                             <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.3em] ${heroBadgeText} ${isDark ? 'border-white/20 bg-white/10' : 'border-indigo-200 bg-white/70 shadow-sm'}`}>
                                 <SparklesIcon className="h-4 w-4" />
-                                Zea.Play V1.2.1
+                                {APP_DISPLAY_NAME}
                             </div>
                             <h1 className={`mt-5 text-4xl font-extrabold tracking-tight ${heroTitleClass}`}>
                                 Gear up for your next sprint.
@@ -226,7 +227,7 @@ const Login: React.FC = () => {
                             <div className="text-center space-y-2">
                                 <div className={`flex items-center justify-center gap-2 ${formTitleClass}`}>
                                     <CodeBracketSquareIcon className="h-10 w-10 text-sky-300" />
-                                    <h2 className="text-3xl font-bold">Zea.Play V1.2.1</h2>
+                                    <h2 className="text-3xl font-bold">{APP_DISPLAY_NAME}</h2>
                                 </div>
                                 <p className={`text-sm ${formSubtitleClass}`}>
                                     Welcome back, hero. Ready to launch today�s missions?

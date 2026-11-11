@@ -1,10 +1,10 @@
-from datetime import datetime, date, time, timedelta
+from datetime import datetime, date, timedelta, timezone
 import hashlib
 import json
 import time as perf_time
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status, UploadFile, File, Form, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status, UploadFile, File, Form, Query
 from sqlalchemy import case, func, inspect, or_, select
 from sqlalchemy.orm import Session, selectinload
 import os
@@ -12,14 +12,17 @@ import shutil
 from uuid import uuid4
 
 from .. import models, schemas
+from ..schemas_task_information import TaskInformationRead
+from ..services import task_information
 from ..cache import build_cache_key, get_cached_json, invalidate_prefix, set_cached_json
 from ..config import get_settings
 from ..notifiers import get_notifier
 from ..database import get_db
 from ..dependencies import get_current_active_user
+from ..task_calendar import calendar_bounds, calendar_day_expression, calendar_zone
 from ..integrations import trigger_n8n_event
 from ..services import notifications as notification_service
-from ..services import audit_logger, task_events
+from ..services import audit_logger, subtasks as subtask_service, subtask_rewards, task_events, task_activity
 from ..tickets import task_link_service
 from ..tickets.models import Ticket
 from ..services.gamification import (
@@ -30,6 +33,7 @@ from ..services.gamification import (
 )
 from ..services.badge_engine import BadgeEvent, process_badge_event
 from ..services.points_table import get_task_creation_points
+from ..services.wallet import adjust as adjust_wallet
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 settings = get_settings()
@@ -43,7 +47,7 @@ def _task_query() -> select:
             selectinload(models.Task.assignee),
             selectinload(models.Task.creator),
             selectinload(models.Task.followers),
-            selectinload(models.Task.dependencies),
+            selectinload(models.Task.dependencies).selectinload(models.Task.creator),
         )
         .order_by(models.Task.created_at.desc())
     )
@@ -65,25 +69,23 @@ def _resolve_status_title(status: models.TaskStatusEnum, status_title_map: dict[
     return status_title_map.get(status_key, status_key)
 
 
-def _serialize_task(task: models.Task, status_title_map: dict[str, str]) -> schemas.TaskRead:
+def _serialize_task(task: models.Task, status_title_map: dict[str, str], *, include_rewards=True) -> schemas.TaskRead:
     payload = schemas.TaskRead.model_validate(task)
+    tenant_id = task.creator.tenant_id
+    same_assignee = task.assignee is not None and task.assignee.tenant_id == tenant_id
     return payload.model_copy(update={
+        "subtask_rewards": subtask_rewards.summary(task) if include_rewards else None,
         "status_title": _resolve_status_title(task.status, status_title_map),
-        "follower_ids": [follower.id for follower in task.followers],
+        "assignee": payload.assignee if same_assignee else None,
+        "assigned_to_id": task.assigned_to_id if same_assignee else None,
+        "dependencies": [schemas.TaskSummary.model_validate(dependency) for dependency in task.dependencies if dependency.creator and dependency.creator.tenant_id == tenant_id],
+        "follower_ids": [follower.id for follower in task.followers if follower.tenant_id == tenant_id],
     })
 
 
 def _serialize_tasks(tasks: List[models.Task], status_title_map: dict[str, str]) -> List[schemas.TaskRead]:
-    return [_serialize_task(task, status_title_map) for task in tasks]
-
-
-def _serialize_task_list_item(task: models.Task) -> schemas.TaskListItem:
-    payload = schemas.TaskListItem.model_validate(task)
-    return payload.model_copy(update={"follower_ids": [follower.id for follower in task.followers]})
-
-
-def _serialize_task_list_items(tasks: List[models.Task]) -> List[schemas.TaskListItem]:
-    return [_serialize_task_list_item(task) for task in tasks]
+    rewards = subtask_rewards.summary_map(tasks)
+    return [_serialize_task(task, status_title_map, include_rewards=False).model_copy(update={"subtask_rewards":rewards.get(task.id)}) for task in tasks]
 
 
 def _serialize_task_card_item(task: models.Task) -> schemas.TaskListItem:
@@ -94,7 +96,7 @@ def _serialize_task_card_item(task: models.Task) -> schemas.TaskListItem:
         status=task.status,
         priority=task.priority,
         team=task.team,
-        assigned_to_id=task.assigned_to_id,
+        assigned_to_id=task.assigned_to_id if task.assignee and task.assignee.tenant_id == task.creator.tenant_id else None,
         task_group_id=task.task_group_id,
         created_by_id=task.created_by_id,
         created_at=task.created_at,
@@ -107,8 +109,8 @@ def _serialize_task_card_item(task: models.Task) -> schemas.TaskListItem:
         attachments=task.attachments or [],
         estimated_hours=task.estimated_hours,
         tags=task.tags or [],
-        follower_ids=[],
-        subtasks=[],
+        follower_ids=[user.id for user in task.followers if user.tenant_id == task.creator.tenant_id],
+        subtasks=[schemas.SubtaskRead.model_validate(subtask) for subtask in task.subtasks],
     )
 
 
@@ -148,14 +150,24 @@ def _invalidate_task_cache(
     task_events.publish_task_event(payload)
 
 
-def _fetch_task_or_404(db: Session, task_id: str) -> models.Task:
-    task = db.execute(_task_query().where(models.Task.id == task_id)).unique().scalars().first()
+def _fetch_task_or_404(db: Session, task_id: str, *, lock=False, actor=None) -> models.Task:
+    if lock and actor:
+        subtask_rewards.lock_scope(db, task_id, tenant_id=actor.tenant_id)
+    elif lock:
+        subtask_rewards.lock_scope(db, task_id)
+    task = db.execute(_task_query().where(models.Task.id == task_id).execution_options(populate_existing=lock)).unique().scalars().first()
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
     return task
 
 
+def _ensure_task_tenant(task: models.Task, user: models.User) -> None:
+    if not task.creator or task.creator.tenant_id != user.tenant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+
 def _ensure_task_access(task: models.Task, user: models.User) -> None:
+    _ensure_task_tenant(task, user)
     if user.role in {models.RoleEnum.ADMIN, models.RoleEnum.OWNER}:
         return
     if user.role == models.RoleEnum.MANAGER:
@@ -177,6 +189,7 @@ def _ensure_task_access(task: models.Task, user: models.User) -> None:
 
 
 def _ensure_task_update_access(task: models.Task, user: models.User) -> None:
+    _ensure_task_tenant(task, user)
     if task.ticket_id:
         if task.created_by_id != user.id and task.assigned_to_id != user.id:
             raise HTTPException(
@@ -192,6 +205,7 @@ def _ensure_priority_allowed(priority: models.TaskPriorityEnum, user: models.Use
 
 
 def _apply_task_visibility(stmt: select, current_user: models.User) -> select:
+    stmt = stmt.where(models.Task.creator.has(models.User.tenant_id == current_user.tenant_id))
     if current_user.role == models.RoleEnum.MANAGER:
         visibility_filters = [
             models.Task.created_by_id == current_user.id,
@@ -214,10 +228,18 @@ def _apply_task_visibility(stmt: select, current_user: models.User) -> select:
     return stmt
 
 
+def _task_cache_allowed(user: models.User) -> bool:
+    # Employee/manager membership can be revoked between cache writes. Serving
+    # task bodies or aggregate counts from their old scope would bypass live
+    # authorization after a missed invalidation or Redis outage.
+    return user.role in {models.RoleEnum.OWNER, models.RoleEnum.ADMIN}
+
+
 def _resolve_task_followers(
     db: Session,
     follower_ids: Optional[List[str]],
     *,
+    current_user: models.User,
     exclude_ids: Optional[set[str]] = None,
 ) -> List[models.User]:
     """Resolve observer users without mixing them into assignee reward logic."""
@@ -230,11 +252,18 @@ def _resolve_task_followers(
         if not follower_id or follower_id in seen or follower_id in exclude_ids:
             continue
         user = db.get(models.User, follower_id)
-        if not user:
+        if not user or user.tenant_id != current_user.tenant_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Follower user {follower_id} not found")
         seen.add(follower_id)
         resolved.append(user)
     return resolved
+
+
+def _ensure_completion_dependencies(dependencies, tenant_id) -> None:
+    if any(not dependency.creator or dependency.creator.tenant_id != tenant_id for dependency in dependencies):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Repair inaccessible dependency links before completing this task")
+    if any(dependency.status not in COMPLETED_STATUSES for dependency in dependencies):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Complete dependencies before completing this task")
 
 
 def _notify_task_followers(
@@ -279,12 +308,12 @@ def _parse_date_filter(value: Optional[str]) -> Optional[tuple[datetime, datetim
             if start_date > end_date:
                 start_date, end_date = end_date, start_date
             start = datetime(start_date.year, start_date.month, start_date.day)
-            end = datetime(end_date.year, end_date.month, end_date.day, 23, 59, 59)
+            end = datetime(end_date.year, end_date.month, end_date.day, 23, 59, 59, 999999)
             return start, end
 
         parsed = date.fromisoformat(value)
         start = datetime(parsed.year, parsed.month, parsed.day)
-        end = datetime(parsed.year, parsed.month, parsed.day, 23, 59, 59)
+        end = datetime(parsed.year, parsed.month, parsed.day, 23, 59, 59, 999999)
         return start, end
     except ValueError:
         return None
@@ -324,17 +353,17 @@ def _hash_params(params: dict[str, Any]) -> str:
 
 def _list_cache_key(*, tenant_id: str, user_id: str, params: dict[str, Any]) -> str:
     fingerprint = _hash_params(params)
-    return f"{settings.cache_prefix}:tasks:list:tenant:{tenant_id}:user:{user_id}:q:{fingerprint}"
+    return f"{settings.cache_prefix}:tasks:list:tenant:{tenant_id}:user:{user_id}:v2:q:{fingerprint}"
 
 
 def _kanban_cache_key(*, tenant_id: str, user_id: str, params: dict[str, Any]) -> str:
     fingerprint = _hash_params(params)
-    return f"{settings.cache_prefix}:tasks:kanban:tenant:{tenant_id}:user:{user_id}:q:{fingerprint}"
+    return f"{settings.cache_prefix}:tasks:kanban:tenant:{tenant_id}:user:{user_id}:v2:q:{fingerprint}"
 
 
 def _calendar_cache_key(*, tenant_id: str, user_id: str, params: dict[str, Any]) -> str:
     fingerprint = _hash_params(params)
-    return f"{settings.cache_prefix}:tasks:calendar:tenant:{tenant_id}:user:{user_id}:q:{fingerprint}"
+    return f"{settings.cache_prefix}:tasks:calendar:tenant:{tenant_id}:user:{user_id}:v2:q:{fingerprint}"
 
 
 def _lean_task_stmt() -> select:
@@ -346,6 +375,7 @@ def _apply_task_filters(
     db: Session,
     current_user: models.User,
     *,
+    date_timezone: str | None = None,
     search: Optional[str] = None,
     status_filter: Optional[models.TaskStatusEnum] = None,
     priority: Optional[models.TaskPriorityEnum] = None,
@@ -392,10 +422,18 @@ def _apply_task_filters(
             stmt = stmt.where(models.Task.tags.contains([tag_value]))
     due_range = _parse_date_filter(due_date)
     if due_range:
-        stmt = stmt.where(models.Task.due_at.between(due_range[0], due_range[1]))
+        if date_timezone:
+            lower, upper = calendar_bounds(due_range[0].date(), due_range[1].date(), calendar_zone(date_timezone))
+            stmt = stmt.where(models.Task.due_at >= lower, models.Task.due_at < upper)
+        else:
+            stmt = stmt.where(models.Task.due_at.between(due_range[0], due_range[1]))
     created_range = _parse_date_filter(created_date)
     if created_range:
-        stmt = stmt.where(models.Task.created_at.between(created_range[0], created_range[1]))
+        if date_timezone:
+            lower, upper = calendar_bounds(created_range[0].date(), created_range[1].date(), calendar_zone(date_timezone))
+            stmt = stmt.where(models.Task.created_at >= lower, models.Task.created_at < upper)
+        else:
+            stmt = stmt.where(models.Task.created_at.between(created_range[0], created_range[1]))
     if quick_filter == "createdByMe":
         stmt = stmt.where(models.Task.created_by_id == current_user.id)
     elif quick_filter == "myTasks":
@@ -462,19 +500,19 @@ def list_tasks(
 ) -> List[schemas.TaskRead]:
     manager_notifications_created = False
     cache_key = None
-    if skip_overdue_notifications:
+    if skip_overdue_notifications and _task_cache_allowed(current_user):
         tenant_id = str(current_user.tenant_id or settings.default_tenant_id)
         cache_key = build_cache_key(
             resource="tasks:list",
             tenant_id=tenant_id,
             user_id=str(current_user.id),
             path=request.url.path,
-            params=request.query_params.multi_items(),
+            params=[*request.query_params.multi_items(), ("visibility_version", "2"), ("role", current_user.role.value), ("department", str(current_user.department_id))],
         )
         cached_payload = get_cached_json(cache_key)
         if cached_payload is not None:
             return [schemas.TaskRead.model_validate(item) for item in cached_payload]
-    stmt = _task_query()
+    stmt = _task_query().where(models.Task.creator.has(models.User.tenant_id == current_user.tenant_id))
     if current_user.role == models.RoleEnum.MANAGER:
         visibility_filters = [
             models.Task.created_by_id == current_user.id,
@@ -621,14 +659,17 @@ def transfer_tasks(
         ):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Department mismatch")
 
-    stmt = select(models.Task).where(models.Task.assigned_to_id == from_user.id)
+    stmt = select(models.Task).where(models.Task.assigned_to_id == from_user.id,
+        models.Task.creator.has(models.User.tenant_id == current_user.tenant_id)).order_by(models.Task.id)
     if payload.statuses:
         stmt = stmt.where(models.Task.status.in_(payload.statuses))
     tasks = db.execute(stmt).scalars().all()
     now = datetime.utcnow()
     for task in tasks:
+        subtask_rewards.lock_scope(db, task.id)
         task.assigned_to_id = to_user.id
         task.assigned_at = now
+        subtask_rewards.reconcile(db, actor_id=current_user.id, task_id=task.id, authorized_parent_write=True)
     db.commit()
 
     transferred_ids = [task.id for task in tasks]
@@ -671,7 +712,7 @@ def create_task_transfer_request(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user),
 ) -> schemas.TaskTransferWorkflowRead:
-    task = _fetch_task_or_404(db, task_id)
+    task = _fetch_task_or_404(db, task_id, lock=True, actor=current_user)
     _ensure_task_access(task, current_user)
 
     if payload.to_user_id == task.assigned_to_id:
@@ -713,6 +754,9 @@ def create_task_transfer_request(
         task.assigned_at = now
 
     db.add(transfer_request)
+    for affected_id in subtask_rewards.lock_scope(db, task.id):
+        subtask_rewards.reconcile(db, actor_id=current_user.id, task_id=affected_id, authorized_parent_write=True)
+
     db.commit()
 
     if auto_approve:
@@ -812,7 +856,7 @@ def act_on_transfer_request(
     if transfer_request.status != models.TaskTransferStatusEnum.PENDING:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Transfer request already acted on")
 
-    task = _fetch_task_or_404(db, transfer_request.task_id)
+    task = _fetch_task_or_404(db, transfer_request.task_id, lock=True, actor=current_user)
     now = datetime.utcnow()
     transfer_request.approved_by_id = current_user.id
     transfer_request.acted_at = now
@@ -823,6 +867,9 @@ def act_on_transfer_request(
         task.assigned_at = now
     else:
         transfer_request.status = models.TaskTransferStatusEnum.REJECTED
+
+    for affected_id in subtask_rewards.lock_scope(db, task.id):
+        subtask_rewards.reconcile(db, actor_id=current_user.id, task_id=affected_id, authorized_parent_write=True)
 
     db.commit()
 
@@ -889,6 +936,7 @@ def list_tasks_page(
     started_at = perf_time.perf_counter()
     tenant_id = str(current_user.tenant_id or settings.default_tenant_id)
     cache_params = {
+        "access": [current_user.role.value, str(current_user.department_id)],
         "page": page,
         "page_size": page_size,
         "cursor": cursor,
@@ -905,7 +953,7 @@ def list_tasks_page(
         "sort_order": sort_order,
     }
     cache_key = _list_cache_key(tenant_id=tenant_id, user_id=str(current_user.id), params=cache_params)
-    cached_payload = get_cached_json(cache_key)
+    cached_payload = get_cached_json(cache_key) if _task_cache_allowed(current_user) else None
     if cached_payload is not None:
         return schemas.TaskListResponse.model_validate(cached_payload)
 
@@ -941,7 +989,7 @@ def list_tasks_page(
     status_counts = {row[0].value if hasattr(row[0], "value") else str(row[0]): row[1] for row in status_rows}
     total_pages = max(1, (total + page_size - 1) // page_size)
 
-    page_stmt = base_stmt
+    page_stmt = base_stmt.options(selectinload(models.Task.subtasks), selectinload(models.Task.followers), selectinload(models.Task.creator), selectinload(models.Task.assignee))
     if cursor and sort_by in {"created_at", "lastUpdated", "dueAt"}:
         cursor_value, _, cursor_id = cursor.partition("|")
         cursor_dt = datetime.fromisoformat(cursor_value) if cursor_value else None
@@ -969,11 +1017,12 @@ def list_tasks_page(
         next_cursor=next_cursor,
         has_more=has_more,
     )
-    set_cached_json(
-        cache_key,
-        response_payload.model_dump(mode="json"),
-        ttl_seconds=settings.task_list_cache_ttl_seconds,
-    )
+    if _task_cache_allowed(current_user):
+        set_cached_json(
+            cache_key,
+            response_payload.model_dump(mode="json"),
+            ttl_seconds=settings.task_list_cache_ttl_seconds,
+        )
     _log_slow_endpoint("tasks.page", started_at)
     return response_payload
 
@@ -981,6 +1030,7 @@ def list_tasks_page(
 @router.get("/kanban", response_model=schemas.TaskKanbanResponse)
 def list_tasks_kanban(
     request: Request,
+    page: int = Query(1, ge=1),
     page_size: int = Query(
         default_factory=lambda: settings.kanban_page_size_per_column, ge=1, le=200
     ),
@@ -998,6 +1048,8 @@ def list_tasks_kanban(
     started_at = perf_time.perf_counter()
     tenant_id = str(current_user.tenant_id or settings.default_tenant_id)
     cache_params = {
+        "access": [current_user.role.value, str(current_user.department_id)],
+        "page": page,
         "page_size": page_size,
         "search": search,
         "priority": priority.value if priority else None,
@@ -1009,7 +1061,7 @@ def list_tasks_kanban(
         "quick_filter": quick_filter,
     }
     cache_key = _kanban_cache_key(tenant_id=tenant_id, user_id=str(current_user.id), params=cache_params)
-    cached_payload = get_cached_json(cache_key)
+    cached_payload = get_cached_json(cache_key) if _task_cache_allowed(current_user) else None
     if cached_payload is not None:
         return schemas.TaskKanbanResponse.model_validate(cached_payload)
 
@@ -1044,7 +1096,9 @@ def list_tasks_kanban(
         status_value = column.id
         tasks = db.execute(
             base_stmt.where(models.Task.status == status_value)
-            .order_by(models.Task.updated_at.desc())
+            .options(selectinload(models.Task.subtasks), selectinload(models.Task.followers), selectinload(models.Task.creator), selectinload(models.Task.assignee))
+            .order_by(models.Task.updated_at.desc(), models.Task.id.asc())
+            .offset((page - 1) * page_size)
             .limit(page_size)
         ).scalars().all()
         column_payloads.append(
@@ -1058,11 +1112,12 @@ def list_tasks_kanban(
         )
 
     response_payload = schemas.TaskKanbanResponse(columns=column_payloads)
-    set_cached_json(
-        cache_key,
-        response_payload.model_dump(mode="json"),
-        ttl_seconds=settings.task_list_cache_ttl_seconds,
-    )
+    if _task_cache_allowed(current_user):
+        set_cached_json(
+            cache_key,
+            response_payload.model_dump(mode="json"),
+            ttl_seconds=settings.task_list_cache_ttl_seconds,
+        )
     _log_slow_endpoint("tasks.kanban", started_at)
     return response_payload
 
@@ -1074,14 +1129,11 @@ def _parse_required_date(value: str, field_name: str) -> date:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {field_name}")
 
 
-def _date_bounds(start_date: date, end_date: date) -> tuple[datetime, datetime]:
-    return datetime.combine(start_date, time.min), datetime.combine(end_date, time.max)
-
-
 @router.get("/calendar/summary", response_model=schemas.TaskCalendarSummaryResponse)
 def get_calendar_summary(
     start_date: str = Query(..., description="Visible range start date, YYYY-MM-DD."),
     end_date: str = Query(..., description="Visible range end date, YYYY-MM-DD."),
+    calendar_timezone: str | None = Query(default=None, alias="timezone", max_length=64),
     search: Optional[str] = Query(default=None),
     status_filter: Optional[models.TaskStatusEnum] = Query(default=None, alias="status"),
     priority: Optional[models.TaskPriorityEnum] = Query(default=None),
@@ -1099,9 +1151,12 @@ def get_calendar_summary(
     end = _parse_required_date(end_date, "end_date")
     if start > end:
         start, end = end, start
-    range_start, range_end = _date_bounds(start, end)
+    zone = calendar_zone(calendar_timezone)
+    range_start, range_end = calendar_bounds(start, end, zone)
     tenant_id = str(current_user.tenant_id or settings.default_tenant_id)
     cache_params = {
+        "access": [current_user.role.value, str(current_user.department_id)],
+        "timezone": zone.key,
         "start_date": start.isoformat(),
         "end_date": end.isoformat(),
         "search": search,
@@ -1115,7 +1170,7 @@ def get_calendar_summary(
         "quick_filter": quick_filter,
     }
     cache_key = _calendar_cache_key(tenant_id=tenant_id, user_id=str(current_user.id), params=cache_params)
-    cached_payload = get_cached_json(cache_key)
+    cached_payload = get_cached_json(cache_key) if _task_cache_allowed(current_user) else None
     if cached_payload is not None:
         return schemas.TaskCalendarSummaryResponse.model_validate(cached_payload)
 
@@ -1123,6 +1178,7 @@ def get_calendar_summary(
         _lean_task_stmt(),
         db,
         current_user,
+        date_timezone=zone.key,
         search=search,
         status_filter=status_filter,
         priority=priority,
@@ -1132,9 +1188,9 @@ def get_calendar_summary(
         due_date=due_date,
         created_date=created_date,
         quick_filter=quick_filter,
-    ).where(models.Task.due_at.between(range_start, range_end))
+    ).where((models.Task.due_at >= range_start) & (models.Task.due_at < range_end))
     filtered = stmt.order_by(None).subquery()
-    day_expr = func.date(filtered.c.due_at)
+    day_expr = calendar_day_expression(filtered.c.due_at, start, end, zone)
     now = datetime.utcnow()
     rows = db.execute(
         select(
@@ -1172,7 +1228,8 @@ def get_calendar_summary(
         )
         iterator = iterator + timedelta(days=1)
     response_payload = schemas.TaskCalendarSummaryResponse(start_date=start, end_date=end, days=days)
-    set_cached_json(cache_key, response_payload.model_dump(mode="json"), ttl_seconds=45)
+    if _task_cache_allowed(current_user):
+        set_cached_json(cache_key, response_payload.model_dump(mode="json"), ttl_seconds=45)
     _log_slow_endpoint("tasks.calendar.summary", started_at)
     return response_payload
 
@@ -1181,6 +1238,7 @@ def get_calendar_summary(
 def get_calendar_tasks(
     start_date: str = Query(...),
     end_date: Optional[str] = Query(default=None),
+    calendar_timezone: str | None = Query(default=None, alias="timezone", max_length=64),
     search: Optional[str] = Query(default=None),
     status_filter: Optional[models.TaskStatusEnum] = Query(default=None, alias="status"),
     priority: Optional[models.TaskPriorityEnum] = Query(default=None),
@@ -1198,11 +1256,13 @@ def get_calendar_tasks(
     end = _parse_required_date(end_date or start_date, "end_date")
     if start > end:
         start, end = end, start
-    range_start, range_end = _date_bounds(start, end)
+    zone = calendar_zone(calendar_timezone)
+    range_start, range_end = calendar_bounds(start, end, zone)
     stmt = _apply_task_filters(
         _task_query().order_by(None),
         db,
         current_user,
+        date_timezone=zone.key,
         search=search,
         status_filter=status_filter,
         priority=priority,
@@ -1212,11 +1272,30 @@ def get_calendar_tasks(
         due_date=due_date,
         created_date=created_date,
         quick_filter=quick_filter,
-    ).where(models.Task.due_at.between(range_start, range_end)).order_by(models.Task.due_at.asc(), models.Task.created_at.desc())
+    ).where((models.Task.due_at >= range_start) & (models.Task.due_at < range_end)).order_by(models.Task.due_at.asc(), models.Task.created_at.desc())
     tasks = db.execute(stmt).unique().scalars().all()
     status_title_map = _status_title_map(db)
     _log_slow_endpoint("tasks.calendar.tasks", started_at)
     return _serialize_tasks(tasks, status_title_map)
+
+
+@router.get("/{task_id}/information", response_model=TaskInformationRead)
+def get_task_information(
+    task_id: str,
+    response: Response,
+    section: Literal["overview", "timeline", "subtasks", "points", "activity"] = "overview",
+    page: int = Query(1, ge=1, le=1000000),
+    page_size: int = Query(25, ge=1, le=100),
+    search: str = Query("", max_length=200),
+    subtask_id: Optional[str] = Query(None, max_length=36),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user),
+) -> TaskInformationRead:
+    response.headers["Cache-Control"] = "private, no-store"
+    return task_information.read(
+        db, task_id=task_id, who=current_user, section=section, page=page,
+        size=page_size, search=search.strip(), child_id=subtask_id,
+    )
 
 
 @router.get("/{task_id}/summary", response_model=schemas.TaskSummaryResponse)
@@ -1268,7 +1347,7 @@ def create_task(
         normalized_assignees = [None]
 
     if payload.dependencies:
-        dependency_stmt = _task_query().where(models.Task.id.in_(payload.dependencies))
+        dependency_stmt = _apply_task_visibility(_task_query(), current_user).where(models.Task.id.in_(payload.dependencies))
         dependencies = db.execute(dependency_stmt).unique().scalars().all()
         found_ids = {dependency.id for dependency in dependencies}
         missing_ids = [dep_id for dep_id in payload.dependencies if dep_id not in found_ids]
@@ -1282,6 +1361,8 @@ def create_task(
 
     _ensure_priority_allowed(payload.priority, current_user)
     payload_status = payload.status
+    if payload_status in COMPLETED_STATUSES:
+        _ensure_completion_dependencies(dependencies, current_user.tenant_id)
 
     task_group_id = payload.task_group_id or str(uuid4())
     existing_assignees: set[Optional[str]] = set()
@@ -1292,18 +1373,21 @@ def create_task(
             .scalars()
             .all()
         )
+        for existing_task in existing_group_tasks:
+            _ensure_task_access(existing_task, current_user)
         existing_assignees = {task.assigned_to_id for task in existing_group_tasks}
 
     assignee_cache: dict[str, models.User] = {}
     for user_id in (assignee_id for assignee_id in normalized_assignees if assignee_id):
         user = db.get(models.User, user_id)
-        if not user:
+        if not user or user.tenant_id != current_user.tenant_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Assigned user {user_id} not found")
         assignee_cache[user_id] = user
 
     follower_users = _resolve_task_followers(
         db,
         payload.follower_ids,
+        current_user=current_user,
         exclude_ids={current_user.id, *assignee_cache.keys()},
     )
 
@@ -1322,7 +1406,7 @@ def create_task(
             assigned_at=datetime.utcnow() if assignee_id else None,
             task_group_id=task_group_id,
             created_by_id=current_user.id,
-            due_at=payload.due_at,
+            due_at=payload.due_at.astimezone(timezone.utc).replace(tzinfo=None) if payload.due_at and payload.due_at.tzinfo else payload.due_at,
             recurrence_rule=payload.recurrence_rule,
             recurring_task_id=payload.recurring_task_id,
             clarity_rating=payload.clarity_rating,
@@ -1333,14 +1417,6 @@ def create_task(
 
         if payload_status in COMPLETED_STATUSES and not task.completed_at:
             task.completed_at = datetime.utcnow()
-
-        for subtask_input in payload.subtasks:
-            task.subtasks.append(
-                models.Subtask(
-                    title=subtask_input.title,
-                    completed=subtask_input.completed,
-                )
-            )
 
         if dependencies:
             task.dependencies = dependencies
@@ -1356,6 +1432,8 @@ def create_task(
     db.flush()
     now = datetime.utcnow()
     for task in created_tasks:
+        for subtask_input in payload.subtasks:
+            subtask_service.create(db, actor_id=current_user.id, task_id=task.id, data=subtask_input)
         audit_logger.log_event(
             audit_logger.AuditLogInput(
                 action="TASK_CREATED",
@@ -1396,7 +1474,7 @@ def create_task(
     created_count = len(created_tasks)
     current_user.tasks_created += created_count
     creation_points = get_task_creation_points(db)
-    current_user.points += creation_points * created_count
+    adjust_wallet(db, current_user, creation_points * created_count)
     check_and_unlock_achievements(db, current_user)
 
     for task in created_tasks:
@@ -1704,9 +1782,15 @@ def assign_task_template(
 ):
     _ensure_admin_or_owner(current_user)
 
-    template = db.execute(_task_template_query().where(models.TaskTemplate.id == template_id)).unique().scalars().first()
+    template = db.execute(_task_template_query().where(
+        models.TaskTemplate.id == template_id,
+        models.TaskTemplate.creator.has(models.User.tenant_id == current_user.tenant_id),
+    )).unique().scalars().first()
     if not template:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task template not found")
+
+    if template.subtasks and (not payload.planned_start_date or not payload.planned_end_date):
+        raise HTTPException(422, "Planned start and end dates are required for template subtasks")
 
     creation_points = get_task_creation_points(db)
     assigned_tasks = []
@@ -1716,7 +1800,7 @@ def assign_task_template(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Single assignment requires exactly one user_id")
         user_id = payload.user_ids[0]
         user = db.execute(select(models.User).where(models.User.id == user_id)).scalars().first()
-        if not user:
+        if not user or user.tenant_id != current_user.tenant_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
         group_id = str(uuid4())
@@ -1735,12 +1819,9 @@ def assign_task_template(
             tags=template.tags.copy(),
         )
 
-        for subtask_title in template.subtasks:
-            task.subtasks.append(models.Subtask(title=subtask_title, completed=False))
-
         db.add(task)
         current_user.tasks_created += 1
-        current_user.points += creation_points
+        adjust_wallet(db, current_user, creation_points)
         check_and_unlock_achievements(db, current_user)
 
         notification_service.create_notification(
@@ -1762,7 +1843,7 @@ def assign_task_template(
 
         for user_id in payload.user_ids:
             user = db.execute(select(models.User).where(models.User.id == user_id)).scalars().first()
-            if not user:
+            if not user or user.tenant_id != current_user.tenant_id:
                 continue  # Skip invalid users
 
             task = models.Task(
@@ -1779,12 +1860,9 @@ def assign_task_template(
                 tags=template.tags.copy(),
             )
 
-            for subtask_title in template.subtasks:
-                task.subtasks.append(models.Subtask(title=subtask_title, completed=False))
-
             db.add(task)
             current_user.tasks_created += 1
-            current_user.points += creation_points
+            adjust_wallet(db, current_user, creation_points)
             check_and_unlock_achievements(db, current_user)
 
             notification_service.create_notification(
@@ -1809,7 +1887,8 @@ def assign_task_template(
         active_users = db.execute(
             select(models.User).where(
                 models.User.department_id == payload.department_id,
-                models.User.status == models.UserStatusEnum.ACTIVE
+                models.User.status == models.UserStatusEnum.ACTIVE,
+                models.User.tenant_id == current_user.tenant_id,
             )
         ).scalars().all()
 
@@ -1830,12 +1909,9 @@ def assign_task_template(
                 tags=template.tags.copy(),
             )
 
-            for subtask_title in template.subtasks:
-                task.subtasks.append(models.Subtask(title=subtask_title, completed=False))
-
             db.add(task)
             current_user.tasks_created += 1
-            current_user.points += creation_points
+            adjust_wallet(db, current_user, creation_points)
             check_and_unlock_achievements(db, current_user)
 
             notification_service.create_notification(
@@ -1853,6 +1929,12 @@ def assign_task_template(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid assignment type")
 
     for task in assigned_tasks:
+        db.flush()
+        for subtask_title in template.subtasks:
+            subtask_service.create(db, actor_id=current_user.id, task_id=task.id, data={
+                "title":subtask_title, "planned_start_date":payload.planned_start_date,
+                "planned_end_date":payload.planned_end_date,
+            })
         process_badge_event(
             db,
             event=BadgeEvent(
@@ -1911,16 +1993,66 @@ def assign_task_template(
     return serialized_tasks
 
 
+def _publish_activity(user):
+    try:
+        # Invalidation only: no private titles, interval notes or counts are
+        # broadcast to other users. Clients refetch through normal authorization.
+        task_events.publish_task_event({"type": "work.changed", "tenant_id": str(user.tenant_id), "user_id": user.id})
+    except Exception:
+        # Redis delivery is best effort after commit. Reconnect/focus and one
+        # aggregate refresh recover dropped events without replaying a mutation.
+        pass
+
+
+@router.get("/activity")
+def get_personal_activity(user_id: Optional[str] = Query(None, max_length=36),
+    db: Session = Depends(get_db), current_user: models.User = Depends(get_current_active_user)):
+    return task_activity.snapshot(db, actor_id=current_user.id, user_id=user_id)
+
+
+@router.post("/{task_id}/activity")
+def change_personal_activity(task_id: str, payload: schemas.ActivityCommand,
+    db: Session = Depends(get_db), current_user: models.User = Depends(get_current_active_user)):
+    with audit_logger._write_savepoint(db):
+        task_activity.command(db, actor_id=current_user.id, task_id=task_id, **payload.model_dump())
+    db.commit()
+    _publish_activity(current_user)
+    return task_activity.snapshot(db, actor_id=current_user.id)
+
+
+@router.get("/{task_id}/work-intervals")
+def get_confirmed_work(task_id: str, limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db), current_user: models.User = Depends(get_current_active_user)):
+    return task_activity.work_log(db, actor_id=current_user.id, task_id=task_id, limit=limit)
+
+
+@router.post("/{task_id}/work-intervals", status_code=201)
+def add_confirmed_work(task_id: str, payload: schemas.ConfirmedWorkInput,
+    db: Session = Depends(get_db), current_user: models.User = Depends(get_current_active_user)):
+    row = task_activity.record_work(db, actor_id=current_user.id, task_id=task_id, data=payload)
+    db.commit()
+    _publish_activity(current_user)
+    return {"id": row.id, "started_at": row.started_at, "ended_at": row.ended_at,
+            "supersedes_id": payload.supersedes_id}
+
+
 @router.get("/{task_id}", response_model=schemas.TaskRead)
 def get_task(
     task_id: str,
+    include_subtask_activity: bool = Query(False),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user),
 ) -> schemas.TaskRead:
     task = _fetch_task_or_404(db, task_id)
     _ensure_task_access(task, current_user)
     status_title_map = _status_title_map(db)
-    return _serialize_task(task, status_title_map)
+    result = _serialize_task(task, status_title_map)
+    if include_subtask_activity:
+        # Reuse the immutable repository and canonical read permission checks.
+        result.subtask_activity = [schemas.SubtaskActivityRead.model_validate(row)
+            for row in audit_logger.list_task_activity(db, actor_id=current_user.id,
+                task_id=task_id, limit=200)]
+    return result
 
 
 @router.get("/{task_id}/group", response_model=List[schemas.TaskRead])
@@ -1932,7 +2064,7 @@ def get_task_group(
     task = _fetch_task_or_404(db, task_id)
     _ensure_task_access(task, current_user)
 
-    stmt = _task_query().where(models.Task.task_group_id == task.task_group_id)
+    stmt = _task_query().where(models.Task.task_group_id == task.task_group_id, models.Task.creator.has(models.User.tenant_id == current_user.tenant_id))
     group_tasks = db.execute(stmt).unique().scalars().all()
     status_title_map = _status_title_map(db)
     return _serialize_tasks(group_tasks, status_title_map)
@@ -1947,10 +2079,13 @@ def update_task(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user),
 ) -> schemas.TaskRead:
-    task = _fetch_task_or_404(db, task_id)
+    task = _fetch_task_or_404(db, task_id, lock=True, actor=current_user)
     _ensure_task_update_access(task, current_user)
 
     update_data = payload.model_dump(exclude_unset=True)
+    workflow_fields = {"approval_required", "approver_id", "completed_at"}
+    if workflow_fields.intersection(update_data) and current_user.role == models.RoleEnum.USER and task.created_by_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the task creator or staff can change approval configuration or completion timestamps")
     update_fields = sorted(update_data.keys())
     previous_status = task.status
     previous_priority = task.priority
@@ -1958,6 +2093,12 @@ def update_task(
     previous_clarity_rating = task.clarity_rating
     previous_due_at = task.due_at
     new_status = update_data.get("status", task.status)
+    approval_required = update_data.get("approval_required", task.approval_required)
+    if (
+        new_status == models.TaskStatusEnum.DEPLOYED and new_status != previous_status and approval_required
+        and (task.approval_status != models.TaskApprovalStatusEnum.APPROVED or previous_status not in COMPLETED_STATUSES)
+    ):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Complete and approve this task before deployment")
 
     should_award_points = previous_status not in COMPLETED_STATUSES and new_status in COMPLETED_STATUSES
 
@@ -1970,7 +2111,7 @@ def update_task(
         new_assignee_id = update_data["assigned_to_id"]
         if new_assignee_id:
             assignee = db.get(models.User, new_assignee_id)
-            if not assignee:
+            if not assignee or assignee.tenant_id != current_user.tenant_id:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assigned user not found")
             task.assigned_to_id = assignee.id
             if assignee.id != previous_assignee_id:
@@ -1984,7 +2125,7 @@ def update_task(
         approver_id = update_data["approver_id"]
         if approver_id:
             approver = db.get(models.User, approver_id)
-            if not approver:
+            if not approver or approver.tenant_id != current_user.tenant_id:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approver not found")
             task.approver_id = approver.id
         else:
@@ -2007,7 +2148,8 @@ def update_task(
     if "team" in update_data:
         task.team = update_data["team"]
     if "due_at" in update_data:
-        task.due_at = update_data["due_at"]
+        due_at = update_data["due_at"]
+        task.due_at = due_at.astimezone(timezone.utc).replace(tzinfo=None) if due_at and due_at.tzinfo else due_at
     if "completed_at" in update_data:
         task.completed_at = update_data["completed_at"]
     if "recurrence_rule" in update_data:
@@ -2031,7 +2173,7 @@ def update_task(
         if task_id in dependencies_ids:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Task cannot depend on itself")
         if dependencies_ids:
-            dependency_stmt = _task_query().where(models.Task.id.in_(dependencies_ids))
+            dependency_stmt = _apply_task_visibility(_task_query(), current_user).where(models.Task.id.in_(dependencies_ids))
             dependencies = db.execute(dependency_stmt).unique().scalars().all()
             found_ids = {dependency.id for dependency in dependencies}
             missing_ids = [dep_id for dep_id in dependencies_ids if dep_id not in found_ids]
@@ -2048,6 +2190,7 @@ def update_task(
         task.followers = _resolve_task_followers(
             db,
             follower_ids,
+            current_user=current_user,
             exclude_ids={current_user.id, *(filter(None, [task.assigned_to_id]))},
         )
 
@@ -2058,22 +2201,28 @@ def update_task(
         for subtask_input in incoming_subtasks:
             if subtask_input.id and subtask_input.id in existing_subtasks:
                 subtask = existing_subtasks.pop(subtask_input.id)
-                subtask.title = subtask_input.title
-                subtask.completed = subtask_input.completed
+                changes = subtask_input.model_dump(exclude_unset=True, exclude={"id"})
+                # Old clients often echo an unchanged checklist with task edits.
+                if subtask_input.manage or any(getattr(subtask, key, None) != value for key,value in changes.items() if key not in {"expected_version", "confirm_actual_times", "manage"}):
+                    subtask_service.edit(db, actor_id=current_user.id, task_id=task.id,
+                        subtask_id=subtask.id, data=changes)
             else:
-                task.subtasks.append(
-                    models.Subtask(
-                        id=subtask_input.id,
-                        title=subtask_input.title,
-                        completed=subtask_input.completed,
-                    )
-                )
+                if subtask_input.id and db.get(models.Subtask, subtask_input.id):
+                    raise HTTPException(404, "Subtask not found")
+                values = subtask_input.model_dump(exclude_unset=True, exclude={"id", "expected_version", "confirm_actual_times", "manage"})
+                subtask_service.create(db, actor_id=current_user.id, task_id=task.id, data=values)
 
         for stale_subtask in existing_subtasks.values():
+            if stale_subtask.managed or db.scalar(select(models.AuditEvent.id).where(models.AuditEvent.subtask_id==stale_subtask.id, models.AuditEvent.audit_schema_version==2).limit(1)):
+                raise HTTPException(409, "Cannot discard a subtask with immutable history; retain it in the task")
             task.subtasks.remove(stale_subtask)
             db.delete(stale_subtask)
 
+    if task.status in COMPLETED_STATUSES and (task.status != previous_status or dependencies_ids is not None):
+        _ensure_completion_dependencies(task.dependencies, current_user.tenant_id)
+    task_activity.sync_task(db, who=current_user, task=task, previous_status=previous_status)
     if should_award_points:
+        task.approval_status = models.TaskApprovalStatusEnum.PENDING if task.approval_required else models.TaskApprovalStatusEnum.APPROVED
         if task.completed_at is None:
             task.completed_at = datetime.utcnow()
         award_task_completion_points(db, task)
@@ -2088,6 +2237,7 @@ def update_task(
             .where(
                 models.Task.task_group_id == task.task_group_id,
                 models.Task.id != task.id,
+                models.Task.creator.has(models.User.tenant_id == current_user.tenant_id),
             )
         )
         peer_tasks = db.execute(peer_stmt).scalars().all()
@@ -2269,6 +2419,9 @@ def update_task(
             )
         )
 
+    for affected_id in subtask_rewards.lock_scope(db, task.id):
+        subtask_rewards.reconcile(db, actor_id=current_user.id, task_id=affected_id, authorized_parent_write=True)
+
     db.commit()
     _invalidate_task_cache(current_user, action="updated", task_id=task_id)
 
@@ -2301,9 +2454,10 @@ def complete_task(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user),
 ) -> schemas.TaskRead:
-    task = _fetch_task_or_404(db, task_id)
+    task = _fetch_task_or_404(db, task_id, lock=True, actor=current_user)
     _ensure_task_update_access(task, current_user)
 
+    _ensure_completion_dependencies(task.dependencies, current_user.tenant_id)
     previous_status = task.status
     now = datetime.utcnow()
     task.status = models.TaskStatusEnum.DONE
@@ -2316,6 +2470,7 @@ def complete_task(
         task.approval_status = models.TaskApprovalStatusEnum.APPROVED
 
     should_award_points = previous_status not in COMPLETED_STATUSES and task.status in COMPLETED_STATUSES
+    task_activity.sync_task(db, who=current_user, task=task, previous_status=previous_status)
     if should_award_points:
         award_task_completion_points(db, task)
 
@@ -2403,7 +2558,7 @@ def approve_task(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user),
 ) -> schemas.TaskRead:
-    task = _fetch_task_or_404(db, task_id)
+    task = _fetch_task_or_404(db, task_id, lock=True, actor=current_user)
     if not task.approval_required:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Task does not require approval")
     if not task.approver_id or task.approver_id != current_user.id:
@@ -2480,8 +2635,12 @@ def delete_task(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user),
 ) -> None:
-    task = _fetch_task_or_404(db, task_id)
+    task = _fetch_task_or_404(db, task_id, lock=True, actor=current_user)
     _ensure_task_access(task, current_user)
+    if db.scalar(select(models.AuditEvent.id).where(models.AuditEvent.task_id==task_id, models.AuditEvent.audit_schema_version==2).limit(1)):
+        raise HTTPException(409, "This task has immutable history and must be retained; remove its assignment instead of deleting it")
+    from ..services.workload_notifications import task_notice
+    task_notice(db, task, "task_deleted", f"Task '{task.title}' was deleted.")
     status_title_map = _status_title_map(db)
     serialized_task = _serialize_task(task, status_title_map)
 
@@ -2568,18 +2727,18 @@ def update_subtask(
     current_user: models.User = Depends(get_current_active_user),
 ) -> schemas.TaskRead:
     task = _fetch_task_or_404(db, task_id)
-    _ensure_task_access(task, current_user)
+    _ensure_task_update_access(task, current_user)
 
     subtask = next((item for item in task.subtasks if item.id == subtask_id), None)
     if not subtask:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subtask not found")
 
     previous_completed = subtask.completed
-    update_data = payload.model_dump(exclude_unset=True)
-    if "title" in update_data:
-        subtask.title = update_data["title"]
-    if "completed" in update_data:
-        subtask.completed = update_data["completed"]
+    previous_version = subtask.version
+    subtask = subtask_service.edit(db, actor_id=current_user.id, task_id=task_id,
+        subtask_id=subtask_id, data=payload)
+    if subtask.version == previous_version:
+        return _serialize_task(task, _status_title_map(db))
 
     now = datetime.utcnow()
     process_badge_event(
@@ -2594,12 +2753,12 @@ def update_subtask(
             occurred_at=now,
         ),
     )
-    if "completed" in update_data and update_data["completed"] != previous_completed:
+    if subtask.completed != previous_completed:
         process_badge_event(
             db,
             event=BadgeEvent(
                 entity="subtask",
-                event="completed" if update_data["completed"] else "reopened",
+                event="completed" if subtask.completed else "reopened",
                 actor_id=current_user.id,
                 assigned_to_id=task.assigned_to_id,
                 created_by_id=task.created_by_id,

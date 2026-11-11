@@ -34,7 +34,7 @@ const resolveTicketChatUrl = (): string => {
         const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
         return `${protocol}://${window.location.host}`;
     }
-    return 'ws://localhost:8000';
+    return 'ws://localhost:7211';
 };
 
 export const useTicketChat = (ticketId?: string): TicketChatState => {

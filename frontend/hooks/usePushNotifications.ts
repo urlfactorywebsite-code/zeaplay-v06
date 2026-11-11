@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import api from '../services/mockApi';
+import { bindPushSubscription } from '../services/pushBinding';
+import { clearPushBinding } from '../utils/pushBinding';
 
 type PushPermission = NotificationPermission | 'unsupported';
 
@@ -148,16 +150,9 @@ export const usePushNotifications = () => {
         }
       }
 
-      const json = subscription.toJSON();
-      await api.subscribePush({
-        endpoint: subscription.endpoint,
-        keys: {
-          p256dh: json.keys?.p256dh ?? '',
-          auth: json.keys?.auth ?? '',
-        },
-        userAgent: navigator.userAgent,
-        deviceLabel: navigator.platform,
-      });
+      if (!await bindPushSubscription(registration, subscription)) {
+        throw new Error('The notification worker is updating. Retry enabling notifications.');
+      }
 
       setState((prev) => ({
         ...prev,
@@ -183,6 +178,7 @@ export const usePushNotifications = () => {
 
     setState((prev) => ({ ...prev, isLoading: true, error: null }));
     try {
+      clearPushBinding();
       const registration = registrationRef.current ?? (await registerServiceWorker());
       registrationRef.current = registration;
       const subscription = await registration.pushManager.getSubscription();

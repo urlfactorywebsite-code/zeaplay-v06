@@ -1,0 +1,332 @@
+{
+  "phase7browserResult": {
+    "checks": [
+      "real authenticated API renders managed rows and available base",
+      "browser requires both planned dates",
+      "third subtask creates cumulative base capacity 60",
+      "status actions leave manual fields blank",
+      "subtask override is LOW",
+      "manual local wall times stored as UTC without status overwrite",
+      "LOW display override still earns HIGH parent 30 plus existing 15 bonus",
+      "authorized Overview tab loads from aggregation API",
+      "authorized Status timeline tab loads from aggregation API",
+      "authorized Subtasks tab loads from aggregation API",
+      "authorized Points tab loads from aggregation API",
+      "authorized Activity tab loads from aggregation API",
+      "Escape restores focus to icon",
+      "details action opens same complete modal",
+      "mobile modal stays within viewport",
+      "reopen posts compensation and returns earned balance to zero"
+    ],
+    "accessibility": [
+      {
+        "tab": "Overview",
+        "violations": [],
+        "incomplete": []
+      },
+      {
+        "tab": "Status timeline",
+        "violations": [],
+        "incomplete": []
+      },
+      {
+        "tab": "Subtasks",
+        "violations": [],
+        "incomplete": []
+      },
+      {
+        "tab": "Points",
+        "violations": [],
+        "incomplete": []
+      },
+      {
+        "tab": "Activity",
+        "violations": [],
+        "incomplete": []
+      }
+    ],
+    "pointExample": {
+      "base": 30,
+      "bonus": 15,
+      "earned": 45,
+      "reversed": -45,
+      "net": 0
+    },
+    "transport": "actual localhost FastAPI/JWT/SQL; external sinks and Redis excluded"
+  },
+  "phase7activityBrowserResult": {
+    "checks": 5,
+    "sixth": 409,
+    "activeAfterReload": 5,
+    "activeAfterPause": 4,
+    "clockSource": "Server-persisted elapsed activity; manual productive time remains separate",
+    "minimumRunningElapsedSeconds": 2.015941
+  },
+  "phase7socketBrowserResult": {
+    "actualAuthenticatedWebSocketConnected": true,
+    "scope": "Real localhost JWT socket and live SQL authorization; process-local event transport"
+  },
+  "phase7resyncBrowserResult": {
+    "checks": 3,
+    "before": {
+      "inbox": 1,
+      "activity": 2
+    },
+    "after": {
+      "inbox": 2,
+      "activity": 3,
+      "tasks": 1
+    },
+    "scope": "Actual Header recovery handler; synthetic Redis-to-WebSocket frame"
+  },
+  "phase6regressionResult": {
+    "checks": [
+      {
+        "name": "Authoritative unread count includes notifications beyond visible page",
+        "result": "PASS"
+      },
+      {
+        "name": "StrictMode leaves one shared task socket",
+        "result": "PASS"
+      },
+      {
+        "name": "StrictMode and initial socket connection coalesce to one inbox read",
+        "result": "PASS"
+      },
+      {
+        "name": "No automatic permission request or historical browser replay",
+        "result": "PASS"
+      },
+      {
+        "name": "Denied browser retains in-app unread alert",
+        "result": "PASS"
+      },
+      {
+        "name": "Denied browser produces no browser notification or default sound",
+        "result": "PASS"
+      },
+      {
+        "name": "Granted permission uses browser delivery",
+        "result": "PASS"
+      },
+      {
+        "name": "Sound defaults off",
+        "result": "PASS"
+      },
+      {
+        "name": "One hundred realtime events coalesce to one inbox read",
+        "result": "PASS"
+      },
+      {
+        "name": "Repeated state produces no duplicate browser alert",
+        "result": "PASS"
+      },
+      {
+        "name": "Enabled sound produces one short audio presentation",
+        "result": "PASS"
+      },
+      {
+        "name": "Quiet hours suppress browser and sound while keeping unread state",
+        "result": "PASS"
+      },
+      {
+        "name": "Disabled task push suppresses browser without losing inbox",
+        "result": "PASS"
+      },
+      {
+        "name": "Failed inbox refetch preserves last readable state",
+        "result": "PASS"
+      },
+      {
+        "name": "Online recovery refetches authoritative unread count",
+        "result": "PASS"
+      },
+      {
+        "name": "Keyboard opens existing notification center",
+        "result": "PASS"
+      },
+      {
+        "name": "Escape closes notification center and restores focus",
+        "result": "PASS"
+      },
+      {
+        "name": "Notification opens the relevant task through the existing callback",
+        "result": "PASS"
+      },
+      {
+        "name": "Read action updates authoritative badge",
+        "result": "PASS"
+      },
+      {
+        "name": "Session change clears private notification preview",
+        "result": "PASS"
+      },
+      {
+        "name": "Role change clears private notification preview",
+        "result": "PASS"
+      },
+      {
+        "name": "Incomplete quiet-hour range gives useful error",
+        "result": "PASS"
+      },
+      {
+        "name": "Workload preference save preserves explicit capacity and sound",
+        "result": "PASS"
+      },
+      {
+        "name": "Activity popup uses configurable approaching-deadline window",
+        "result": "PASS"
+      },
+      {
+        "name": "Header activity explains estimated overload",
+        "result": "PASS"
+      },
+      {
+        "name": "Workload form has no automated accessibility violations excluding contrast",
+        "result": "PASS"
+      },
+      {
+        "name": "Mobile navigation exposes unread count before expanding",
+        "result": "PASS"
+      },
+      {
+        "name": "Mobile unread badge remains accessible",
+        "result": "PASS"
+      },
+      {
+        "name": "Mobile preferences fit viewport",
+        "result": "PASS"
+      },
+      {
+        "name": "Mobile notification center stays within the viewport",
+        "result": "PASS"
+      },
+      {
+        "name": "Mobile notifications remain selectable",
+        "result": "PASS"
+      },
+      {
+        "name": "Unmount removes inbox event listeners and shared socket",
+        "result": "PASS"
+      },
+      {
+        "name": "No browser permission prompt during all scenarios",
+        "result": "PASS"
+      }
+    ],
+    "accessibility": {
+      "violations": [],
+      "incomplete": []
+    },
+    "fixture": "Actual Header, hooks, activity dialog and workload preferences under StrictMode; synthetic API and transports"
+  },
+  "phase6reviewResult": {
+    "checks": [
+      {
+        "name": "Healthy socket has no periodic inbox or workload HTTP polling",
+        "result": "PASS"
+      },
+      {
+        "name": "Continuous events refresh before the burst stops",
+        "result": "PASS"
+      },
+      {
+        "name": "Slow reads stay single flight with one pending refresh",
+        "result": "PASS"
+      },
+      {
+        "name": "Slow workload queries are not canceled and restarted by every event",
+        "result": "PASS"
+      },
+      {
+        "name": "Inactive tabs do not refetch inbox or workload for activity bursts",
+        "result": "PASS"
+      },
+      {
+        "name": "Returning to the tab restores authoritative unread badge",
+        "result": "PASS"
+      },
+      {
+        "name": "Socket reconnect keeps one connection and refetches both projections",
+        "result": "PASS"
+      },
+      {
+        "name": "Local-day recovery uses one scheduled boundary instead of clock polling",
+        "result": "PASS"
+      },
+      {
+        "name": "Boundary event refetches workload once",
+        "result": "PASS"
+      },
+      {
+        "name": "Closed activity UI leaves no socket or inbox requests",
+        "result": "PASS"
+      },
+      {
+        "name": "Denied browser never prompts during reconnect, inactivity or bursts",
+        "result": "PASS"
+      }
+    ],
+    "counts": {
+      "beforeBurst": {
+        "calls": 1,
+        "activity": 2,
+        "maxInFlight": 1,
+        "maxActivityFlight": 1,
+        "sockets": 1,
+        "prompts": 0
+      },
+      "afterBurst": {
+        "calls": 4,
+        "activity": 5,
+        "maxInFlight": 1,
+        "maxActivityFlight": 1,
+        "sockets": 1,
+        "prompts": 0
+      }
+    },
+    "note": "Real hooks/Header and synthetic API; interval callbacks invoked for deterministic polling proof."
+  },
+  "phase6tabsResult": {
+    "checks": [
+      {
+        "name": "Two visible tabs present one browser notification",
+        "result": "PASS"
+      },
+      {
+        "name": "Two visible tabs play one enabled sound",
+        "result": "PASS"
+      },
+      {
+        "name": "Multiple tabs never request browser permission",
+        "result": "PASS"
+      },
+      {
+        "name": "Browser supports shared Web Locks deduplication",
+        "result": "PASS"
+      }
+    ],
+    "totals": [
+      {
+        "shown": 0,
+        "sounds": 0,
+        "prompts": 0,
+        "locks": true
+      },
+      {
+        "shown": 1,
+        "sounds": 1,
+        "prompts": 0,
+        "locks": true
+      }
+    ]
+  },
+  "phase7securityProbe": {
+    "probe": "Unauthenticated owner enrollment into existing synthetic workspace",
+    "beforeRepair": 201,
+    "afterRepair": 403,
+    "message": "Use authorized user management to join an existing workspace",
+    "securityResult": "PASS",
+    "scope": "Owned localhost fixture only"
+  }
+}

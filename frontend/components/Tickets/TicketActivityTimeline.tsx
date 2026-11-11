@@ -1,3 +1,4 @@
+import Avatar from '../Avatar';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowPathIcon,
@@ -263,7 +264,7 @@ const TicketActivityTimeline: React.FC<TicketActivityTimelineProps> = ({ ticket 
                 <div className="flex items-center space-x-2 mb-1">
                   <UserIcon className="h-4 w-4 text-gray-400" />
                   <span className="text-sm font-medium text-gray-900 dark:text-white">
-                    {resolveActor(item.actorId)}
+                    <span className="inline-flex items-center gap-2"><Avatar user={userMap.get(item.actorId ?? "")} className="h-6 w-6" />{resolveActor(item.actorId)}</span>
                   </span>
                   <span className="text-sm text-gray-500 dark:text-gray-400">
                     {timeAgo(item.createdAt)}

@@ -2,6 +2,7 @@
 import React, { Suspense, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth, useTheme } from '../hooks/useAuth';
+import { useNavigation } from '../hooks/useNavigation';
 import api from '../services/mockApi';
 import { Achievement, BadgeProgress, User, Reward, RewardStatus, Task, CUSTOM_STATUS_NAMES, Role, UserStatus } from '../types';
 import { formatDate } from '../utils';
@@ -1343,11 +1344,13 @@ const Achievements: React.FC = () => {
     const refreshTimerRef = useRef<number | null>(null);
     const { user: currentUser, updateUserInContext } = useAuth();
     const { theme } = useTheme();
+    const { pages: navigationPages } = useNavigation();
     const resolvedTheme = useResolvedTheme(theme as ThemeMode);
     const requestedWorkspaceTab = searchParams.get('tab') as AchievementWorkspaceTabKey | null;
     const availableWorkspaceTabs = useMemo(
-        () => achievementWorkspaceTabs.filter((tab) => canAccessAchievementWorkspaceTab(currentUser?.role, tab)),
-        [currentUser?.role],
+        () => achievementWorkspaceTabs.filter((tab) => canAccessAchievementWorkspaceTab(currentUser?.role, tab)
+            && (!['levels', 'points', 'templates'].includes(tab.key) || navigationPages.some(page => page.id === tab.key && page.access === 'allowed'))),
+        [currentUser?.role, navigationPages],
     );
     const activeWorkspaceTab = availableWorkspaceTabs.some((tab) => tab.key === requestedWorkspaceTab)
         ? (requestedWorkspaceTab as AchievementWorkspaceTabKey)
@@ -2316,7 +2319,7 @@ const Achievements: React.FC = () => {
         <div className="space-y-8">
             <section className="rounded-3xl border border-border-color/70 bg-surface/70 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.18)] backdrop-blur-sm sm:p-5">
                 <div className="flex flex-wrap gap-3">
-                    {availableWorkspaceTabs.map((tab) => {
+                    {availableWorkspaceTabs.filter(tab => !['levels', 'points', 'templates'].includes(tab.key) || navigationPages.some(page => page.id === tab.key && page.visible)).map((tab) => {
                         const isActive = tab.key === activeWorkspaceTab;
                         const TabIcon = tab.icon;
                         return (

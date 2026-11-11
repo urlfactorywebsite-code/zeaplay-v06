@@ -12,6 +12,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from .. import models, schemas
 from ..database import SessionLocal
+from ..services.navigation_sockets import bind_socket, socket_allowed
 from ..dependencies import _decode_access_token
 from ..rate_limit import check_rate_limit
 from ..chat.permissions import ChatPermissionService
@@ -159,6 +160,10 @@ class ChatConnectionManager:
         event = build_event(event_type, payload)
         for socket in recipients:
             try:
+                if not socket_allowed(socket, ("chat",)):
+                    await socket.close(code=status.WS_1008_POLICY_VIOLATION)
+                    await self.disconnect(socket)
+                    continue
                 await socket.send_json(event)
             except Exception:
                 await self.disconnect(socket)
@@ -299,7 +304,7 @@ async def chat_ws(websocket: WebSocket) -> None:
             await _reject_websocket(websocket)
             return
         token_tenant_id = str(payload.get("tenant_id") or "")
-        if token_tenant_id and token_tenant_id != str(user.tenant_id):
+        if token_tenant_id != str(user.tenant_id) or not bind_socket(websocket, user, db, ("chat",)):
             await _reject_websocket(websocket)
             return
 
@@ -307,6 +312,9 @@ async def chat_ws(websocket: WebSocket) -> None:
     try:
         while True:
             raw = await websocket.receive_json()
+            if not socket_allowed(websocket, ("chat",)):
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                break
             if not isinstance(raw, dict):
                 await websocket.send_json(_socket_error("invalid_payload", "Expected a JSON object"))
                 continue

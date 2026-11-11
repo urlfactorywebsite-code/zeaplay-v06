@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { getAccessToken } from '../services/tokenStorage';
+import { TASK_ACTIVITY_WATCH } from '../utils/taskActivity';
+import { taskReconnectDelay } from '../utils/taskSocket';
 
 type TaskSocketStatus = 'connected' | 'connecting' | 'offline';
 
@@ -9,10 +11,8 @@ type TaskSocketEvent = Record<string, unknown>;
 type UseTaskWebSocketOptions = {
   enabled?: boolean;
   onEvent?: (payload: TaskSocketEvent) => void;
+  userId?: string;
 };
-
-const MAX_RECONNECT_DELAY_MS = 15000;
-const BASE_RECONNECT_DELAY_MS = 1000;
 
 const resolveTasksSocketUrl = (): string | null => {
   const base =
@@ -24,34 +24,40 @@ const resolveTasksSocketUrl = (): string | null => {
     return null;
   }
 
-  const normalized = base.replace(/\/$/, '');
-  const protocol = normalized.startsWith('https') ? 'wss' : 'ws';
-  const wsBase = normalized.replace(/^https?/, protocol);
-  return `${wsBase}/ws/tasks`;
+  const url = new URL(base, window.location.origin);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  url.pathname = `${url.pathname.replace(/\/$/, '')}/ws/tasks`;
+  return url.toString();
 };
 
-export const useTaskWebSocket = ({ enabled = true, onEvent }: UseTaskWebSocketOptions) => {
+export const useTaskWebSocket = ({ enabled = true, onEvent, userId }: UseTaskWebSocketOptions) => {
+  const token = getAccessToken();
   const [status, setStatus] = useState<TaskSocketStatus>('offline');
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<number | null>(null);
   const retryCountRef = useRef(0);
+  const callback = useRef(onEvent);
+  callback.current = onEvent;
+  const disposed = useRef(false);
+  const detach = useRef<(() => void) | null>(null);
+  const watched = useRef<string | undefined>(undefined);
+  const lastSeen = useRef(0);
 
   const cleanup = useCallback(() => {
     if (reconnectRef.current) {
       window.clearTimeout(reconnectRef.current);
       reconnectRef.current = null;
     }
-    if (socketRef.current) {
-      socketRef.current.close();
-      socketRef.current = null;
-    }
+    detach.current?.(); detach.current = null;
+    const socket = socketRef.current;
+    socketRef.current = null;
+    socket?.close();
   }, []);
 
   const connect = useCallback(() => {
-    if (!enabled) {
+    if (!enabled || disposed.current || !navigator.onLine || socketRef.current?.readyState === WebSocket.OPEN || socketRef.current?.readyState === WebSocket.CONNECTING) {
       return;
     }
-    const token = getAccessToken();
     const wsUrl = resolveTasksSocketUrl();
     if (!token || !wsUrl) {
       setStatus('offline');
@@ -62,56 +68,92 @@ export const useTaskWebSocket = ({ enabled = true, onEvent }: UseTaskWebSocketOp
     setStatus('connecting');
     const socket = new WebSocket(url);
     socketRef.current = socket;
+    lastSeen.current = performance.now();
 
-    socket.addEventListener('open', () => {
+    const opened = () => {
+      if (disposed.current || socketRef.current !== socket) return;
+      lastSeen.current = performance.now();
       retryCountRef.current = 0;
       setStatus('connected');
-    });
+      if (watched.current && watched.current !== userId) socket.send(JSON.stringify({ type: 'activity.watch', user_id: watched.current }));
+    };
 
-    socket.addEventListener('message', (event) => {
+    const received = (event: MessageEvent) => {
+      if (disposed.current || socketRef.current !== socket) return;
+      lastSeen.current = performance.now();
       try {
         const payload = JSON.parse(event.data);
         if (payload?.type === 'ping') {
           socket.send(JSON.stringify({ type: 'pong' }));
           return;
         }
-        onEvent?.(payload);
+        if (payload?.type === 'activity.watching') return;
+        callback.current?.(payload);
       } catch {
         // ignore malformed payload
       }
-    });
+    };
 
-    socket.addEventListener('close', () => {
-      setStatus('offline');
-      if (!enabled) {
+    const closed = () => {
+      if (!enabled || disposed.current || socketRef.current !== socket) {
         return;
       }
-      const retryDelay = Math.min(
-        BASE_RECONNECT_DELAY_MS * 2 ** retryCountRef.current,
-        MAX_RECONNECT_DELAY_MS,
-      );
+      detach.current?.(); detach.current = null;
+      socketRef.current = null;
+      setStatus('offline');
+      if (!navigator.onLine) return;
+      const retryDelay = taskReconnectDelay(retryCountRef.current, Math.random());
       retryCountRef.current += 1;
       reconnectRef.current = window.setTimeout(() => {
+        reconnectRef.current = null;
         connect();
       }, retryDelay);
-    });
+    };
 
-    socket.addEventListener('error', () => {
-      socket.close();
-    });
-  }, [enabled, onEvent]);
+    const failed = () => { if (socketRef.current === socket) socket.close(); };
+    socket.addEventListener('open', opened);
+    socket.addEventListener('message', received);
+    socket.addEventListener('close', closed);
+    socket.addEventListener('error', failed);
+    detach.current = () => {
+      socket.removeEventListener('open', opened); socket.removeEventListener('message', received);
+      socket.removeEventListener('close', closed); socket.removeEventListener('error', failed);
+    };
+  }, [enabled, token, userId]);
 
   useEffect(() => {
-    if (!enabled) {
+    disposed.current = false;
+    if (!enabled || !token) {
       cleanup();
       setStatus('offline');
       return;
     }
     connect();
-    return () => {
-      cleanup();
+    const watch = (event: Event) => {
+      watched.current = (event as CustomEvent<{ userId?: string }>).detail?.userId;
+      const socket = socketRef.current;
+      if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'activity.watch', user_id: watched.current || null }));
     };
-  }, [cleanup, connect, enabled]);
+    const offline = () => { cleanup(); setStatus('offline'); };
+    const online = () => { cleanup(); connect(); };
+    const check = () => {
+      if (document.hidden || !navigator.onLine) return;
+      if (socketRef.current && performance.now() - lastSeen.current > 90_000) socketRef.current.close();
+      else if (!socketRef.current && reconnectRef.current === null) connect();
+    };
+    window.addEventListener(TASK_ACTIVITY_WATCH, watch);
+    window.addEventListener('offline', offline); window.addEventListener('online', online);
+    document.addEventListener('visibilitychange', check);
+    const watchdog = window.setInterval(check, 30_000);
+    return () => {
+      disposed.current = true;
+      cleanup();
+      window.clearInterval(watchdog);
+      window.removeEventListener(TASK_ACTIVITY_WATCH, watch);
+      window.removeEventListener('offline', offline); window.removeEventListener('online', online);
+      document.removeEventListener('visibilitychange', check);
+    };
+  }, [cleanup, connect, enabled, token]);
 
   return useMemo(
     () => ({

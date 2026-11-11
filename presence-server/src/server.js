@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import http from 'node:http';
+import { readFileSync } from 'node:fs';
 
 import express from 'express';
 import jwt from 'jsonwebtoken';
@@ -7,9 +8,11 @@ import { createClient } from 'redis';
 import { Server } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
 
+const { version: appVersion } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+
 const config = {
-  port: Number.parseInt(process.env.PRESENCE_PORT || '6212', 10),
-  redisUrl: process.env.PRESENCE_REDIS_URL || 'redis://localhost:6379',
+  port: Number.parseInt(process.env.PRESENCE_PORT || '7212', 10),
+  redisUrl: process.env.PRESENCE_REDIS_URL || 'redis://localhost:7379',
   jwtSecret: process.env.PRESENCE_JWT_SECRET || '',
   jwtAlgorithm: process.env.PRESENCE_JWT_ALGORITHM || 'HS256',
   eventsChannel: process.env.PRESENCE_EVENTS_CHANNEL || 'presence:events',
@@ -39,10 +42,11 @@ function parseOrigins(value) {
     return [
       'http://localhost:5173',
       'http://127.0.0.1:5173',
-      'http://localhost:6200',
-      'http://127.0.0.1:6200',
+      'http://localhost:7300',
+      'http://127.0.0.1:7300',
       'http://localhost:3000',
       'http://127.0.0.1:3000',
+      'https://todoplay.urlfactory.website',
       'https://play.zeacrm.com',
       'https://playapi.zeacrm.com',
     ];
@@ -315,6 +319,7 @@ app.get('/health', async (_req, res) => {
   res.status(statusCode).json({
     status: redisStatus === 'ok' ? 'ok' : 'degraded',
     service: 'zeaplay-presence',
+    version: appVersion,
     redis: redisStatus,
   });
 });

@@ -1,25 +1,25 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { getAccessToken } from '../services/tokenStorage';
+import { useTaskFilter, useTaskViewActive } from '../hooks/useTaskView';
+import { calendarDateKey as getDateKey, taskDeadlineDateKey, parseTaskDate, resolveTaskTimezone, calendarToday, taskWallTimeToUtc } from '../utils/taskCalendarDates';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
     Task,
     User,
     TaskPriority,
     TaskStatus,
-    RecurrenceRule,
     Role,
     TaskCalendarDaySummary,
 } from '../types';
-import { useAuth, useTheme, useSearch } from '../hooks/useAuth';
+import { useAuth, useTheme } from '../hooks/useAuth';
 import api from '../services/mockApi';
 import TaskDetailModal from '../components/TaskDetailModal';
 import TaskPriorityBadge from '../components/ui/TaskPriorityBadge';
 import CreateTaskModal from '../components/CreateTaskModal';
 import { PlusIcon, DocumentTextIcon, BellIcon, XMarkIcon, SparklesIcon } from '../components/icons';
 import PageLoader from '../components/loading/PageLoader';
-import GamificationService, { GamificationStats, AchievementPopup } from '../services/gamification';
 import { CUSTOM_STATUS_NAMES } from '../types';
 
-const gamificationService = GamificationService.getInstance();
 
 
 type ThemeMode = 'light' | 'dark' | 'colorful' | 'professional' | 'gamified' | 'system';
@@ -55,33 +55,18 @@ const resolveTheme = (theme: ThemeMode): ResolvedTheme => {
     return 'dark';
 };
 
-const getDateKey = (date: Date) => date.toISOString().split('T')[0];
 const isTaskCompleted = (task: Task) => task.status === TaskStatus.DONE;
 
 const getTaskTimeState = (task: Task, now = new Date()): TaskTimeState => {
     if (isTaskCompleted(task)) return 'completed';
     if (!task.dueAt) return 'none';
-    const dueTime = new Date(task.dueAt).getTime();
+    const dueTime = parseTaskDate(task.dueAt).getTime();
     if (Number.isNaN(dueTime)) return 'none';
     const hoursRemaining = (dueTime - now.getTime()) / 36e5;
     if (hoursRemaining < 0) return 'overdue';
     if (hoursRemaining <= 24) return 'urgent';
     if (hoursRemaining <= 72) return 'warning';
     return 'safe';
-};
-
-const getDateVisualState = (tasks: Task[], date: Date, now = new Date()): DateVisualState => {
-    const todayKey = getDateKey(now);
-    const dateKey = getDateKey(date);
-    if (tasks.length === 0) return dateKey === todayKey ? 'today' : 'empty';
-
-    const taskStates = tasks.map((task) => getTaskTimeState(task, now));
-    if (taskStates.includes('overdue')) return 'overdue';
-    if (taskStates.includes('urgent')) return 'urgent';
-    if (taskStates.includes('warning')) return 'warning';
-    if (dateKey === todayKey) return 'today';
-    if (taskStates.every((state) => state === 'completed')) return 'completed';
-    return 'active';
 };
 
 const getCalendarThemeClasses = (theme: ResolvedTheme) => {
@@ -230,7 +215,6 @@ const getRangeForView = (mode: ViewMode, reference: Date) => {
         }
         return days;
     }
-    // month
     const monthStart = startOfMonth(reference);
     const monthEnd = new Date(reference.getFullYear(), reference.getMonth() + 1, 0);
     const start = new Date(monthStart);
@@ -250,7 +234,11 @@ const getRangeForView = (mode: ViewMode, reference: Date) => {
 const createLightweightId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 
 const CalendarView: React.FC = () => {
+  const active = useTaskViewActive();
     const { user } = useAuth() as { user: User | null };
+    const timeZone = resolveTaskTimezone(user?.timezone);
+    const today = () => calendarToday(timeZone);
+    const session = `${getAccessToken()}:${user?.role}`;
     const queryClient = useQueryClient();
     const { theme } = useTheme();
     const resolvedTheme = resolveTheme(theme as ThemeMode);
@@ -266,30 +254,24 @@ const CalendarView: React.FC = () => {
     const [loading, setLoading] = useState(true);
 
     const [viewMode, setViewMode] = useState<ViewMode>('month');
-    const [currentDate, setCurrentDate] = useState(new Date());
+    const [currentDate, setCurrentDate] = useState(() => calendarToday(timeZone));
+    useEffect(() => { setCurrentDate(calendarToday(timeZone)); setSelectedDateKey(null); }, [timeZone]);
     const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
     const [selectedDateKey, setSelectedDateKey] = useState<string | null>(null);
     const [selectedPreviewTaskId, setSelectedPreviewTaskId] = useState<string | null>(null);
 
-    const [searchTerm, setSearchTerm] = useState('');
+    const [searchTerm, setSearchTerm] = useTaskFilter('search');
 
-    // Filter states
-    const [priorityFilter, setPriorityFilter] = useState<'ALL' | TaskPriority>('ALL');
-    const [statusFilter, setStatusFilter] = useState<'ALL' | TaskStatus>('ALL');
-    const [assigneeFilter, setAssigneeFilter] = useState<'ALL' | 'ME' | string>('ALL');
-    const [teamFilter, setTeamFilter] = useState<string>('');
-    const [tagFilter, setTagFilter] = useState<string>('');
-    const [dueDateFilter, setDueDateFilter] = useState<string>('');
-    const [creationDateFilter, setCreationDateFilter] = useState<string>('');
-    const [quickFilter, setQuickFilter] = useState<string>('');
+    const [priorityFilter, setPriorityFilter] = useTaskFilter<'ALL' | TaskPriority>('priority', 'ALL');
+    const [statusFilter, setStatusFilter] = useTaskFilter<'ALL' | TaskStatus>('status', 'ALL');
+    const [assigneeFilter, setAssigneeFilter] = useTaskFilter<'ALL' | 'ME' | string>('assignee', 'ALL');
+    const [teamFilter] = useTaskFilter<string>('team', '');
+    const [tagFilter] = useTaskFilter<string>('tag', '');
+    const [dueDateFilter] = useTaskFilter<string>('due', '');
+    const [creationDateFilter] = useTaskFilter<string>('created', '');
+    const [quickFilter] = useTaskFilter<string>('quick', '');
 
-    // Removed inline quick add UI state and handlers as per user request
-    // const [quickAddDate, setQuickAddDate] = useState<string | null>(null);
-    // const [quickAddTitle, setQuickAddTitle] = useState('');
-    // const [quickAddPriority, setQuickAddPriority] = useState<TaskPriority>(TaskPriority.MEDIUM);
-    // const [quickAddLoading, setQuickAddLoading] = useState(false);
-    const [activityLog, setActivityLog] = useState<{ message: string; timestamp: string }[]>([]);
-    const reminderSentRef = useRef<Set<string>>(new Set());
+    const [, setActivityLog] = useState<{ message: string; timestamp: string }[]>([]);
 
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [createModalDate, setCreateModalDate] = useState<string | null>(null);
@@ -303,9 +285,6 @@ const CalendarView: React.FC = () => {
     const remindersStorageKey = useMemo(() => (user ? `calendar-reminders-${user.id}` : null), [user]);
     const canCreateTasks = !!user && [Role.MANAGER, Role.ADMIN, Role.OWNER].includes(user.role);
 
-    // Gamification states
-    const [gamificationStats, setGamificationStats] = useState<GamificationStats | null>(null);
-    const [achievementPopups, setAchievementPopups] = useState<AchievementPopup[]>([]);
 
     const logActivity = useCallback((message: string) => {
         setActivityLog((prev) => {
@@ -380,54 +359,8 @@ const CalendarView: React.FC = () => {
         }
     }, [remindersByDate, remindersStorageKey]);
 
-    // Removed inline quick add handlers
-    // const openQuickAdd = (date: Date) => {
-    //     setQuickAddDate(date.toISOString());
-    //     setQuickAddTitle('');
-    //     setQuickAddPriority(TaskPriority.MEDIUM);
-    // };
 
-    // const submitQuickAdd = async () => {
-    //     if (!quickAddDate || !user || !quickAddTitle.trim()) {
-    //         return;
-    //     }
-    //     setQuickAddLoading(true);
-    //     try {
-    //         await api.createTask(
-    //             {
-    //                 title: quickAddTitle.trim(),
-    //                 description: 'Created from calendar quick add.',
-    //                 status: TaskStatus.TODO,
-    //                 priority: quickAddPriority,
-    //                 team: 'Calendar',
-    //                 assignedTo: assigneeFilter === 'ME' ? user.id : assigneeFilter === 'ALL' ? user.id : assigneeFilter,
-    //                 dueAt: quickAddDate,
-    //                 recurrenceRule: RecurrenceRule.NONE,
-    //                 recurringTaskId: null,
-    //                 clarityRating: null,
-    //                 attachments: [],
-    //                 estimatedHours: null,
-    //                 tags: [],
-    //                 subtasks: [],
-    //             } as any,
-    //             user.id,
-    //         );
-    //         logActivity(`Quick-added "${quickAddTitle.trim()}" for ${new Date(quickAddDate).toLocaleDateString()}`);
-    //         setQuickAddDate(null);
-    //         setQuickAddTitle('');
-    //         fetchData();
-    //     } catch (error) {
-    //         console.error('Failed to quick add task', error);
-    //     } finally {
-    //         setQuickAddLoading(false);
-    //     }
-    // };
 
-    // const handleCancelQuickAdd = () => {
-    //     setQuickAddDate(null);
-    //     setQuickAddTitle('');
-    //     setQuickAddPriority(TaskPriority.MEDIUM);
-    // };
 
     const daysInView = useMemo(() => getRangeForView(viewMode, currentDate), [viewMode, currentDate]);
     const visibleRange = useMemo(() => {
@@ -436,6 +369,7 @@ const CalendarView: React.FC = () => {
         return { startKey: getDateKey(start), endKey: getDateKey(end) };
     }, [daysInView]);
     const calendarQueryParams = useMemo(() => ({
+        timezone: timeZone,
         search: searchTerm.trim() || undefined,
         status: statusFilter !== 'ALL' ? statusFilter : undefined,
         priority: priorityFilter !== 'ALL' ? priorityFilter : undefined,
@@ -445,15 +379,15 @@ const CalendarView: React.FC = () => {
         dueDate: dueDateFilter || undefined,
         createdDate: creationDateFilter || undefined,
         quickFilter: quickFilter || undefined,
-    }), [assigneeFilter, creationDateFilter, dueDateFilter, priorityFilter, quickFilter, searchTerm, statusFilter, tagFilter, teamFilter, user?.id]);
+    }), [assigneeFilter, creationDateFilter, dueDateFilter, priorityFilter, quickFilter, searchTerm, statusFilter, tagFilter, teamFilter, user?.id, timeZone]);
 
     const summaryQueryKey = useMemo(
-        () => ['tasks', 'calendar', 'summary', visibleRange.startKey, visibleRange.endKey, calendarQueryParams] as const,
-        [calendarQueryParams, visibleRange.endKey, visibleRange.startKey],
+        () => ['tasks', 'calendar', session, 'summary', visibleRange.startKey, visibleRange.endKey, calendarQueryParams] as const,
+        [calendarQueryParams, visibleRange.endKey, visibleRange.startKey, session],
     );
     const visibleTasksQueryKey = useMemo(
-        () => ['tasks', 'calendar', 'range-tasks', visibleRange.startKey, visibleRange.endKey, calendarQueryParams] as const,
-        [calendarQueryParams, visibleRange.endKey, visibleRange.startKey],
+        () => ['tasks', 'calendar', session, 'range-tasks', visibleRange.startKey, visibleRange.endKey, calendarQueryParams] as const,
+        [calendarQueryParams, visibleRange.endKey, visibleRange.startKey, session],
     );
 
     const calendarSummaryQuery = useQuery({
@@ -464,7 +398,7 @@ const CalendarView: React.FC = () => {
             ...calendarQueryParams,
             signal,
         }),
-        enabled: Boolean(user),
+        enabled: Boolean(user) && active,
         staleTime: 60_000,
         placeholderData: keepPreviousData,
     });
@@ -477,15 +411,15 @@ const CalendarView: React.FC = () => {
             ...calendarQueryParams,
             signal,
         }),
-        enabled: Boolean(user) && viewMode !== 'month',
+        enabled: Boolean(user) && active && viewMode !== 'month',
         staleTime: 30_000,
         placeholderData: keepPreviousData,
     });
 
     const usersQuery = useQuery({
-        queryKey: ['users', 'calendar'],
+        queryKey: ['users', 'tasks-module', session],
         queryFn: () => api.getUsers(),
-        enabled: Boolean(user),
+        enabled: Boolean(user) && active,
         staleTime: 60_000,
         placeholderData: keepPreviousData,
     });
@@ -493,6 +427,24 @@ const CalendarView: React.FC = () => {
     const fetchData = useCallback(() => {
         void queryClient.invalidateQueries({ queryKey: ['tasks', 'calendar'] });
     }, [queryClient]);
+    const selectedDayQuery = useQuery({
+        queryKey: ['tasks', 'calendar', session, 'date-tasks', selectedDateKey, calendarQueryParams],
+        queryFn: ({ signal }) => api.getTaskCalendarTasks({
+            startDate: selectedDateKey!, ...calendarQueryParams, signal,
+        }),
+        enabled: Boolean(user) && active && viewMode === 'month' && Boolean(selectedDateKey),
+        staleTime: 30_000,
+    });
+    useEffect(() => {
+        if (!selectedDayQuery.data || !selectedDateKey || viewMode !== 'month') return;
+        const dayTasks = selectedDayQuery.data;
+        setTasks(previous => [
+            ...previous.filter(task => !task.dueAt || taskDeadlineDateKey(task.dueAt, timeZone) !== selectedDateKey),
+            ...dayTasks,
+        ]);
+        setSelectedPreviewTaskId(previous => dayTasks.some(task => task.id === previous) ? previous : dayTasks[0]?.id ?? null);
+    }, [selectedDayQuery.data, selectedDateKey, viewMode, timeZone]);
+
 
     useEffect(() => {
         if (calendarSummaryQuery.data) {
@@ -534,7 +486,7 @@ const CalendarView: React.FC = () => {
     }, [calendarSummaryQuery.error, usersQuery.error, visibleTasksQuery.error]);
 
     useEffect(() => {
-        if (!user || viewMode !== 'month') return;
+        if (!user || !active || viewMode !== 'month') return;
         const preload = (monthOffset: number) => {
             const adjacentDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + monthOffset, 1);
             const adjacentDays = getRangeForView('month', adjacentDate);
@@ -544,7 +496,7 @@ const CalendarView: React.FC = () => {
             const startDate = getDateKey(start);
             const endDate = getDateKey(end);
             void queryClient.prefetchQuery({
-                queryKey: ['tasks', 'calendar', 'summary', startDate, endDate, calendarQueryParams],
+                queryKey: ['tasks', 'calendar', session, 'summary', startDate, endDate, calendarQueryParams],
                 queryFn: ({ signal }) => api.getTaskCalendarSummary({
                     startDate,
                     endDate,
@@ -556,14 +508,7 @@ const CalendarView: React.FC = () => {
         };
         preload(-1);
         preload(1);
-    }, [calendarQueryParams, currentDate, queryClient, user, viewMode]);
-
-    // Update gamification stats when tasks or user changes
-    useEffect(() => {
-        if (!user || !tasks.length) return;
-        const stats = gamificationService.getGamificationStats(tasks, user);
-        setGamificationStats(stats);
-    }, [tasks, user]);
+    }, [calendarQueryParams, currentDate, queryClient, user, viewMode, active]);
 
     const tasksByDate = useMemo(() => {
         const map = new Map<string, Task[]>();
@@ -571,14 +516,14 @@ const CalendarView: React.FC = () => {
             if (!task.dueAt) {
                 return;
             }
-            const dateKey = getDateKey(new Date(task.dueAt));
+            const dateKey = taskDeadlineDateKey(task.dueAt, timeZone);
             if (!map.has(dateKey)) {
                 map.set(dateKey, []);
             }
             map.get(dateKey)!.push(task);
         });
         return map;
-    }, [tasks]);
+    }, [tasks, timeZone]);
 
     const dateSummaries = useMemo(() => {
         const map = new Map<string, CalendarDateSummary>();
@@ -594,56 +539,12 @@ const CalendarView: React.FC = () => {
         return [...(tasksByDate.get(selectedDateKey) ?? [])].sort((a, b) => {
             const priorityDiff = priorityOrder[a.priority] - priorityOrder[b.priority];
             if (priorityDiff !== 0) return priorityDiff;
-            return new Date(a.dueAt ?? 0).getTime() - new Date(b.dueAt ?? 0).getTime();
+            return parseTaskDate(a.dueAt).getTime() - parseTaskDate(b.dueAt).getTime();
         });
     }, [selectedDateKey, tasksByDate]);
     const selectedPreviewTask = useMemo(() => (
         selectedDayTasks.find((task) => task.id === selectedPreviewTaskId) ?? selectedDayTasks[0] ?? null
     ), [selectedDayTasks, selectedPreviewTaskId]);
-
-    useEffect(() => {
-        if (!user) {
-            return;
-        }
-        const now = new Date();
-        const tomorrowStart = new Date(now);
-        tomorrowStart.setDate(tomorrowStart.getDate() + 1);
-        tomorrowStart.setHours(0, 0, 0, 0);
-        const tomorrowEnd = new Date(tomorrowStart);
-        tomorrowEnd.setHours(23, 59, 59, 999);
-
-        tasks.forEach((task) => {
-            if (!task.dueAt) return;
-            if (reminderSentRef.current.has(task.id)) return;
-            const dueDate = new Date(task.dueAt);
-            if (dueDate >= tomorrowStart && dueDate <= tomorrowEnd) {
-                reminderSentRef.current.add(task.id);
-                const payload = {
-                    taskId: task.id,
-                    title: task.title,
-                    dueAt: task.dueAt,
-                    priority: task.priority,
-                    assignedTo: task.assignedTo,
-                    requestedBy: user?.id,
-                };
-                fetch('https://n8n.urlfactory.website/webhook/Remainder', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
-                }).catch((error) => console.error('Failed to send reminder', error));
-                logActivity(`Reminder scheduled for "${task.title}" (due tomorrow)`);
-            }
-        });
-    }, [tasks, user, logActivity]);
-
-    const workloadHeat = useMemo(() => {
-        const counts = new Map<string, number>();
-        tasksByDate.forEach((value, key) => {
-            counts.set(key, value.length);
-        });
-        const max = Math.max(1, ...Array.from(counts.values()));
-        return { counts, max };
-    }, [tasksByDate]);
 
     const conflictDates = useMemo(() => {
         const conflicts = new Set<string>();
@@ -684,38 +585,20 @@ const CalendarView: React.FC = () => {
     };
 
     const handleToday = () => {
-        setCurrentDate(new Date());
+        setCurrentDate(today());
     };
 
     const handleTaskClick = (taskId: string) => {
+        setSelectedDateKey(null);
+        setSelectedPreviewTaskId(null);
         setSelectedTaskId(taskId);
     };
 
-    const openDateDrawer = async (date: Date) => {
+    const openDateDrawer = (date: Date) => {
         const dateKey = getDateKey(date);
         setSelectedDateKey(dateKey);
         setSelectedPreviewTaskId(tasksByDate.get(dateKey)?.[0]?.id ?? null);
         setActiveQuickActionsDay(null);
-        if (!tasksByDate.has(dateKey)) {
-            try {
-                const dayTasks = await queryClient.fetchQuery({
-                    queryKey: ['tasks', 'calendar', 'date-tasks', dateKey, calendarQueryParams],
-                    queryFn: ({ signal }) => api.getTaskCalendarTasks({
-                        startDate: dateKey,
-                        ...calendarQueryParams,
-                        signal,
-                    }),
-                    staleTime: 30_000,
-                });
-                setTasks((prev) => {
-                    const withoutDate = prev.filter((task) => !task.dueAt || getDateKey(new Date(task.dueAt)) !== dateKey);
-                    return [...withoutDate, ...dayTasks];
-                });
-                setSelectedPreviewTaskId(dayTasks[0]?.id ?? null);
-            } catch (error) {
-                console.error('Failed to fetch day tasks:', error);
-            }
-        }
     };
 
     const closeDateDrawer = () => {
@@ -725,7 +608,6 @@ const CalendarView: React.FC = () => {
 
     const closeTaskModal = () => {
         setSelectedTaskId(null);
-        fetchData();
     };
 
     const handleTaskDeleted = (_taskId: string) => {
@@ -744,80 +626,36 @@ const CalendarView: React.FC = () => {
             return;
         }
         const movedTask = tasks.find((task) => task.id === taskId);
-        const iso = new Date(date).toISOString();
         try {
+            const iso = taskWallTimeToUtc(`${getDateKey(date)}T00:00`, timeZone);
             setTasks((prev) => prev.map((task) => (task.id === taskId ? { ...task, dueAt: iso } : task)));
             await api.updateTask(taskId, { dueAt: iso }, user.id);
-            fetchData();
             if (movedTask) {
                 logActivity(`Moved "${movedTask.title}" to ${new Date(date).toLocaleDateString()}`);
             }
         } catch (error) {
             console.error('Failed to move task', error);
+            if (movedTask) setTasks(previous => previous.map(task => task.id === taskId ? movedTask : task));
             fetchData();
         }
     };
 
     const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => e.preventDefault();
 
-    // Removed inline quick add handlers as per user request
-    // const openQuickAdd = (date: Date) => {
-    //     setQuickAddDate(date.toISOString());
-    //     setQuickAddTitle('');
-    //     setQuickAddPriority(TaskPriority.MEDIUM);
-    // };
 
-    // const submitQuickAdd = async () => {
-    //     if (!quickAddDate || !user || !quickAddTitle.trim()) {
-    //         return;
-    //     }
-    //     setQuickAddLoading(true);
-    //     try {
-    //         await api.createTask(
-    //             {
-    //                 title: quickAddTitle.trim(),
-    //                 description: 'Created from calendar quick add.',
-    //                 status: TaskStatus.TODO,
-    //                 priority: quickAddPriority,
-    //                 team: 'Calendar',
-    //                 assignedTo: assigneeFilter === 'ME' ? user.id : assigneeFilter === 'ALL' ? user.id : assigneeFilter,
-    //                 dueAt: quickAddDate,
-    //                 recurrenceRule: RecurrenceRule.NONE,
-    //                 recurringTaskId: null,
-    //                 clarityRating: null,
-    //                 attachments: [],
-    //                 estimatedHours: null,
-    //                 tags: [],
-    //                 subtasks: [],
-    //             } as any,
-    //             user.id,
-    //         );
-    //         logActivity(`Quick-added "${quickAddTitle.trim()}" for ${new Date(quickAddDate).toLocaleDateString()}`);
-    //         setQuickAddDate(null);
-    //         setQuickAddTitle('');
-    //         fetchData();
-    //     } catch (error) {
-    //         console.error('Failed to quick add task', error);
-    //     } finally {
-    //         setQuickAddLoading(false);
-    //     }
-    // };
 
-    // const handleCancelQuickAdd = () => {
-    //     setQuickAddDate(null);
-    //     setQuickAddTitle('');
-    //     setQuickAddPriority(TaskPriority.MEDIUM);
-    // };
 
     const openCreateModal = (date: Date) => {
-        setCreateModalDate(date.toISOString());
+        setSelectedDateKey(null);
+        setSelectedPreviewTaskId(null);
+        setActiveQuickActionsDay(null);
+        setCreateModalDate(getDateKey(date));
         setIsCreateModalOpen(true);
     };
 
     const closeCreateModal = () => {
         setIsCreateModalOpen(false);
         setCreateModalDate(null);
-        fetchData();
     };
 
     const toggleQuickActions = (dateKey: string) => {
@@ -954,7 +792,7 @@ const CalendarView: React.FC = () => {
                         key={task.id}
                         draggable
                         onDragStart={(e) => handleDragStart(e, task.id)}
-                        onClick={() => handleTaskClick(task.id)}
+                        onClick={(event) => { event.stopPropagation(); handleTaskClick(task.id); }}
                         className="calendar-task-card group rounded-2xl border p-3 text-left text-sm transition"
                     >
                         <div className="flex items-center justify-between gap-2">
@@ -1033,7 +871,7 @@ const CalendarView: React.FC = () => {
     };
 
     const renderCells = () => {
-        const todayKey = getDateKey(new Date());
+        const todayKey = getDateKey(today());
         const month = currentDate.getMonth();
         const isMonth = viewMode === 'month';
         const now = new Date();
@@ -1047,7 +885,7 @@ const CalendarView: React.FC = () => {
             const summary = dateSummaries.get(dateKey) ?? getDateTaskSummary([]);
             const isSelected = selectedDateKey === dateKey;
             const urgentTotal = summary.priority.urgent + summary.priority.high;
-            const visualState = getVisualStateFromSummary(summary, day, now);
+            const visualState = getVisualStateFromSummary(summary, day, calendarToday(timeZone, now));
             const isToday = dateKey === todayKey;
 
             const isQuickActionsOpen = activeQuickActionsDay === dateKey;
@@ -1079,6 +917,8 @@ const CalendarView: React.FC = () => {
             const cell = (
                 <div
                     key={dateKey}
+                    data-date={dateKey}
+                    aria-label={`Tasks for ${dateKey}`}
                     role="button"
                     tabIndex={0}
                     onClick={() => openDateDrawer(day)}
@@ -1230,11 +1070,11 @@ const CalendarView: React.FC = () => {
         });
 
         if (viewMode === 'month') {
-            return <div className="space-y-3 overflow-x-auto pb-2"><div className="min-w-[980px] space-y-3">{rows}</div></div>;
+            return <div className="space-y-3">{rows}</div>;
         }
 
         if (viewMode === 'week') {
-            return <div className="grid grid-cols-7 gap-3">{cells}</div>;
+            return <div className="max-w-full overflow-x-auto"><div className="grid min-w-[700px] grid-cols-7 gap-3">{cells}</div></div>;
         }
 
         return <div className="grid gap-3">{cells}</div>;
@@ -1322,7 +1162,13 @@ const CalendarView: React.FC = () => {
                                 </button>
                             )}
                         </div>
-                        {selectedDayTasks.length === 0 ? (
+                        {selectedDayQuery.isLoading ? (
+                            <p role="status" className={`p-4 text-sm ${drawerMutedText}`}>Loading day tasks...</p>
+                        ) : selectedDayQuery.isError && viewMode === 'month' ? (
+                            <div role="alert" className="rounded-2xl border p-4 text-sm">
+                                Unable to load day tasks. <button type="button" className="underline" onClick={() => void selectedDayQuery.refetch()}>Retry</button>
+                            </div>
+                        ) : selectedDayTasks.length === 0 ? (
                             <div className={`rounded-2xl border border-dashed p-8 text-center text-sm ${drawerMutedText}`}>
                                 No tasks scheduled for this date.
                             </div>
@@ -1353,7 +1199,7 @@ const CalendarView: React.FC = () => {
                                                     <span className={`h-1.5 w-1.5 rounded-full ${urgency.dot}`} />
                                                     {urgency.label}
                                                 </span>
-                                                {task.dueAt && <span className={drawerMutedText}>{new Date(task.dueAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
+                                                {task.dueAt && <span className={drawerMutedText}>{parseTaskDate(task.dueAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone })}</span>}
                                             </div>
                                         </button>
                                     );
@@ -1373,7 +1219,7 @@ const CalendarView: React.FC = () => {
                                     <span className="rounded-xl border border-current/10 px-3 py-2">Priority<br /><b>{selectedPreviewTask.priority}</b></span>
                                     <span className="rounded-xl border border-current/10 px-3 py-2">Status<br /><b>{getStatusLabel(selectedPreviewTask.status)}</b></span>
                                     <span className="rounded-xl border border-current/10 px-3 py-2">Squad<br /><b>{selectedPreviewTask.team || 'None'}</b></span>
-                                    <span className="rounded-xl border border-current/10 px-3 py-2">Due<br /><b>{selectedPreviewTask.dueAt ? new Date(selectedPreviewTask.dueAt).toLocaleString() : 'None'}</b></span>
+                                    <span className="rounded-xl border border-current/10 px-3 py-2">Due<br /><b>{selectedPreviewTask.dueAt ? parseTaskDate(selectedPreviewTask.dueAt).toLocaleString([], { timeZone }) : 'None'}</b></span>
                                 </div>
                                 <p className={`whitespace-pre-wrap text-sm leading-6 ${drawerMutedText}`}>
                                     {selectedPreviewTask.description || 'No description available.'}
@@ -1556,7 +1402,7 @@ const CalendarView: React.FC = () => {
     );
 
     const filterBar = (
-        <div className={`mb-6 grid gap-3 rounded-2xl border px-5 py-4 md:grid-cols-[2fr,1fr,1fr,1fr] ${calendarTheme.panel}`}>
+        <div data-calendar-filters className={`mb-6 grid grid-cols-1 gap-3 rounded-2xl border px-5 py-4 sm:grid-cols-2 xl:grid-cols-[2fr_1fr_1fr_1fr] [&>input]:min-w-0 [&>input]:w-full [&>select]:min-w-0 [&>select]:w-full ${calendarTheme.panel}`}>
             <input
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -1592,7 +1438,7 @@ const CalendarView: React.FC = () => {
                 onChange={(e) => setAssigneeFilter(e.target.value as 'ALL' | 'ME' | string)}
                 className={`rounded-xl border px-4 py-2 text-sm focus:outline-none focus:ring-2 ${fieldClass}`}
             >
-                <option value="ME">My quests</option>
+                <option value={user?.id || "ME"}>My quests</option>
                 <option value="ALL">Entire squad</option>
                             {Array.from(usersMap.values()).map((member) => {
                                 const typedMember = member as User;
@@ -1629,26 +1475,23 @@ const CalendarView: React.FC = () => {
 
     return (
         <div className={`${calendarTheme.page} space-y-6`}>
-            <h1 className={`text-3xl font-extrabold tracking-tight ${calendarTheme.heading}`}>Mission Calendar</h1>
+            <p className="text-xs text-text-secondary" data-calendar-timezone>Calendar timezone: {timeZone}</p>
+            <h2 className={`text-3xl font-extrabold tracking-tight ${calendarTheme.heading}`}>Calendar</h2>
             {controls}
             {filterBar}
             {legend}
-            {viewMode === 'month' && (
-                <div className="overflow-x-auto pb-2">
-                    <div className={`grid min-w-[980px] grid-cols-7 gap-3 text-xs font-semibold uppercase tracking-[0.3em] ${calendarTheme.muted}`}>
-                        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
-                            <div key={day} className={calendarTheme.weekday}>
-                                {day}
-                            </div>
-                        ))}
+            {viewMode === 'month' ? <div className="max-w-full overflow-x-auto pb-2" aria-label="Calendar month grid">
+                <div className="min-w-[700px] space-y-3 lg:min-w-[980px]">
+                    <div className={`grid grid-cols-7 gap-3 text-xs font-semibold uppercase tracking-[0.15em] ${calendarTheme.muted}`}>
+                        {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(day => <div key={day} className={calendarTheme.weekday}>{day}</div>)}
                     </div>
+                    {renderCells()}
                 </div>
-            )}
-            {renderCells()}
+            </div> : renderCells()}
             <div className={`rounded-2xl border border-dashed p-4 text-xs ${calendarTheme.panel} ${calendarTheme.muted}`}>
                 Advanced automations such as reminders, external calendar sync, exports, smart scheduling, and time-blocking are on the roadmap.
             </div>
-            {selectedTaskId && (
+            {active && selectedTaskId && (
                 <TaskDetailModal
                     taskId={selectedTaskId}
                     isOpen={!!selectedTaskId}
@@ -1657,16 +1500,17 @@ const CalendarView: React.FC = () => {
                     onTaskDeleted={handleTaskDeleted}
                 />
             )}
-            {isCreateModalOpen && (
+            {active && isCreateModalOpen && (
                 <CreateTaskModal
                     isOpen={isCreateModalOpen}
                     onClose={closeCreateModal}
                     onTaskCreated={closeCreateModal}
                     initialDueDate={createModalDate}
+                    timeZone={timeZone}
                 />
             )}
-            {quickActionModal}
-            {dateDetailsDrawer}
+            {active && quickActionModal}
+            {active && dateDetailsDrawer}
         </div>
     );
 };

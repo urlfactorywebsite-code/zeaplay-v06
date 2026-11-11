@@ -1,0 +1,21 @@
+{
+  "removed_owned_containers": [
+    {
+      "name": "zea-local-repair-pg-52176203d426",
+      "removed": true
+    },
+    {
+      "name": "zea-local-repair-tests-48754f4e6072",
+      "removed": true
+    }
+  ],
+  "private_rehearsal_network_removed": true,
+  "installed_status": {
+    "zeaplay_v1-backend-1": "running",
+    "zeaplay_v1-frontend-1": "running",
+    "zeaplay_v1-postgres-1": "running",
+    "zeaplay_v1-presence-1": "running",
+    "zeaplay_v1-redis-1": "running"
+  },
+  "protected_backup_retained": true
+}

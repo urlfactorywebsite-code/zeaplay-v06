@@ -1,0 +1,42 @@
+{
+  "baseline": {
+    "test_profile_snapshots_are_read_only": {
+      "requests": 10,
+      "sql_per_snapshot": 10.0,
+      "median_ms": 56.46974999945087,
+      "max_ms": 266.4932999978191,
+      "writes": 0
+    },
+    "test_profile_two_hundred_user_snapshots": {
+      "users": 200,
+      "concurrency": 20,
+      "requests": 200,
+      "seconds": 5.943005199998879,
+      "requests_per_second": 33.65300774093849,
+      "sql_per_snapshot": 10.0,
+      "median_ms": 447.40994999847317,
+      "p95_ms": 560.2930999993987,
+      "writes": 0
+    }
+  },
+  "optimized": {
+    "test_profile_snapshots_are_read_only": {
+      "requests": 10,
+      "sql_per_snapshot": 6.0,
+      "median_ms": 34.24450000056822,
+      "max_ms": 249.7213999995438,
+      "writes": 0
+    },
+    "test_profile_two_hundred_user_snapshots": {
+      "users": 200,
+      "concurrency": 20,
+      "requests": 200,
+      "seconds": 4.661860299998807,
+      "requests_per_second": 42.90132846753284,
+      "sql_per_snapshot": 6.0,
+      "median_ms": 337.9942999999912,
+      "p95_ms": 480.7212999985495,
+      "writes": 0
+    }
+  }
+}

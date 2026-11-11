@@ -1,0 +1,41 @@
+{
+  "passed": 8,
+  "failed": 0,
+  "results": [
+    {
+      "name": "Entire Workspace defaults to one ZIP and all dataset selections",
+      "status": "PASS"
+    },
+    {
+      "name": "Custom selection, search, clear and select all",
+      "status": "PASS"
+    },
+    {
+      "name": "Configurations create, rename, duplicate and delete",
+      "status": "PASS"
+    },
+    {
+      "name": "Exactly one native download; reload does not repeat it",
+      "status": "PASS"
+    },
+    {
+      "name": "Import validates without writing and requires preview plus typed confirmation",
+      "status": "PASS"
+    },
+    {
+      "name": "Mobile layout fits the viewport",
+      "status": "PASS"
+    },
+    {
+      "name": "Existing import entry points retain the selected file and dataset without automatic restore",
+      "status": "PASS"
+    },
+    {
+      "name": "No component errors or unintended API mutations",
+      "status": "PASS"
+    }
+  ],
+  "errors": [],
+  "downloads": 1,
+  "restores": 1
+}

@@ -1,0 +1,864 @@
+{
+  "passed": 10,
+  "failed": 0,
+  "results": [
+    {
+      "name": "Owner enables protected Settings and saves API with exactly Owner/Admin visibility",
+      "status": "PASS"
+    },
+    {
+      "name": "owner real login observes API policy and independent endpoint authorization",
+      "status": "PASS"
+    },
+    {
+      "name": "admin real login observes API policy and independent endpoint authorization",
+      "status": "PASS"
+    },
+    {
+      "name": "manager real login observes API policy and independent endpoint authorization",
+      "status": "PASS"
+    },
+    {
+      "name": "user real login observes API policy and independent endpoint authorization",
+      "status": "PASS"
+    },
+    {
+      "name": "A fresh browser reads persisted global policy without inheriting personal storage",
+      "status": "PASS"
+    },
+    {
+      "name": "Owner disables API; every role loses navigation and direct configuration access",
+      "status": "PASS"
+    },
+    {
+      "name": "Re-enabling API restores only Owner/Admin after refresh and login",
+      "status": "PASS"
+    },
+    {
+      "name": "Tenant B remains unchanged when Tenant A changes policy",
+      "status": "PASS"
+    },
+    {
+      "name": "No uncaught errors during authenticated end-to-end scenario",
+      "status": "PASS"
+    }
+  ],
+  "errors": [],
+  "requests": [
+    {
+      "path": "/auth/login",
+      "method": "POST",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "PUT",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "PUT",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/logout",
+      "method": "POST",
+      "status": 204
+    },
+    {
+      "path": "/auth/login",
+      "method": "POST",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/config/api",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/config/smtp/multiple",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/config/oauth",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/logout",
+      "method": "POST",
+      "status": 204
+    },
+    {
+      "path": "/auth/login",
+      "method": "POST",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/config/api",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/config/smtp/multiple",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/config/oauth",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/logout",
+      "method": "POST",
+      "status": 204
+    },
+    {
+      "path": "/auth/login",
+      "method": "POST",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/config/api",
+      "method": "GET",
+      "status": 403
+    },
+    {
+      "path": "/config/smtp/multiple",
+      "method": "GET",
+      "status": 403
+    },
+    {
+      "path": "/config/oauth",
+      "method": "GET",
+      "status": 403
+    },
+    {
+      "path": "/auth/logout",
+      "method": "POST",
+      "status": 204
+    },
+    {
+      "path": "/auth/login",
+      "method": "POST",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/config/api",
+      "method": "GET",
+      "status": 403
+    },
+    {
+      "path": "/config/smtp/multiple",
+      "method": "GET",
+      "status": 403
+    },
+    {
+      "path": "/config/oauth",
+      "method": "GET",
+      "status": 403
+    },
+    {
+      "path": "/auth/logout",
+      "method": "POST",
+      "status": 204
+    },
+    {
+      "path": "/auth/login",
+      "method": "POST",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/login",
+      "method": "POST",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "PUT",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/logout",
+      "method": "POST",
+      "status": 204
+    },
+    {
+      "path": "/auth/login",
+      "method": "POST",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/config/api",
+      "method": "GET",
+      "status": 403
+    },
+    {
+      "path": "/auth/logout",
+      "method": "POST",
+      "status": 204
+    },
+    {
+      "path": "/auth/login",
+      "method": "POST",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/config/api",
+      "method": "GET",
+      "status": 403
+    },
+    {
+      "path": "/auth/logout",
+      "method": "POST",
+      "status": 204
+    },
+    {
+      "path": "/auth/login",
+      "method": "POST",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/config/api",
+      "method": "GET",
+      "status": 403
+    },
+    {
+      "path": "/auth/logout",
+      "method": "POST",
+      "status": 204
+    },
+    {
+      "path": "/auth/login",
+      "method": "POST",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/config/api",
+      "method": "GET",
+      "status": 403
+    },
+    {
+      "path": "/auth/logout",
+      "method": "POST",
+      "status": 204
+    },
+    {
+      "path": "/auth/login",
+      "method": "POST",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "PUT",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/logout",
+      "method": "POST",
+      "status": 204
+    },
+    {
+      "path": "/auth/login",
+      "method": "POST",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/logout",
+      "method": "POST",
+      "status": 204
+    },
+    {
+      "path": "/auth/login",
+      "method": "POST",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/logout",
+      "method": "POST",
+      "status": 204
+    },
+    {
+      "path": "/auth/login",
+      "method": "POST",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/logout",
+      "method": "POST",
+      "status": 204
+    },
+    {
+      "path": "/auth/login",
+      "method": "POST",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "PUT",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/logout",
+      "method": "POST",
+      "status": 204
+    },
+    {
+      "path": "/auth/login",
+      "method": "POST",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/config/api",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/logout",
+      "method": "POST",
+      "status": 204
+    },
+    {
+      "path": "/auth/login",
+      "method": "POST",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "PUT",
+      "status": 200
+    },
+    {
+      "path": "/navigation",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/auth/logout",
+      "method": "POST",
+      "status": 204
+    }
+  ]
+}

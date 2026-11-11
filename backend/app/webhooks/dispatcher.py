@@ -14,7 +14,6 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 
-from ..config import get_settings
 from ..database import SessionLocal
 from ..tickets.models import WebhookDeliveryLog, WebhookDeliveryStatusEnum, WebhookSubscription
 from ..services import audit_logger
@@ -68,12 +67,17 @@ def queue_webhook_deliveries(
     *,
     event_type: str,
     payload: dict[str, Any],
+    tenant_id: uuid.UUID | None = None,
 ) -> list[WebhookDeliveryLog]:
+    if tenant_id is None:
+        # Unscoped events must never fan out across tenant subscriptions.
+        return []
     subscriptions = db.execute(
         select(WebhookSubscription)
         .where(
             WebhookSubscription.enabled.is_(True),
             WebhookSubscription.deleted_at.is_(None),
+            WebhookSubscription.tenant_id == tenant_id,
         )
     ).scalars().all()
 
@@ -92,8 +96,6 @@ def queue_webhook_deliveries(
     if not subscriptions:
         return []
 
-    settings = get_settings()
-    tenant_id = uuid.UUID(settings.default_tenant_id)
     now = _now()
     logs: list[WebhookDeliveryLog] = []
     for subscription in subscriptions:
@@ -145,7 +147,7 @@ def _attempt_delivery(
     delivery.attempt_count = (delivery.attempt_count or 0) + 1
     delivery.last_attempt_at = now
 
-    if not subscription.enabled or subscription.deleted_at is not None:
+    if delivery.tenant_id != subscription.tenant_id or not subscription.enabled or subscription.deleted_at is not None:
         delivery.status = WebhookDeliveryStatusEnum.FAILED
         delivery.error_message = "Webhook disabled"
         delivery.last_error = delivery.error_message
@@ -188,6 +190,7 @@ def _attempt_delivery(
             delivery.updated_at = now
             audit_logger.log_event(
                 audit_logger.AuditLogInput(
+                    entity_type="webhook_configuration", entity_id=str(subscription.tenant_id),
                     action="WEBHOOK_DELIVERED",
                     category=app_models.AuditLogCategoryEnum.AUTOMATION,
                     source=app_models.AuditLogSourceEnum.AUTOMATION,
@@ -209,6 +212,7 @@ def _attempt_delivery(
         delivery.updated_at = now
         audit_logger.log_event(
             audit_logger.AuditLogInput(
+                    entity_type="webhook_configuration", entity_id=str(subscription.tenant_id),
                 action="WEBHOOK_FAILED",
                 category=app_models.AuditLogCategoryEnum.AUTOMATION,
                 source=app_models.AuditLogSourceEnum.AUTOMATION,
@@ -233,6 +237,7 @@ def _attempt_delivery(
         delivery.updated_at = now
         audit_logger.log_event(
             audit_logger.AuditLogInput(
+                    entity_type="webhook_configuration", entity_id=str(subscription.tenant_id),
                 action="WEBHOOK_FAILED",
                 category=app_models.AuditLogCategoryEnum.AUTOMATION,
                 source=app_models.AuditLogSourceEnum.AUTOMATION,

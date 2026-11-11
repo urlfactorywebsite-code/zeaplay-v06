@@ -1,3 +1,4 @@
+import { releaseVersionLabel } from '../utils/appVersion';
 import React from 'react';
 import { XMarkIcon } from './icons';
 import { ReleaseNotes, ReleaseNotesMode } from '../types';
@@ -69,7 +70,7 @@ const ReleaseNotesModal: React.FC<ReleaseNotesModalProps> = ({
         <div className="flex flex-wrap items-center justify-between gap-4 p-6 border-b border-slate-800">
           <div>
             <h2 className="text-2xl font-semibold text-white">Product Updates</h2>
-            <p className="text-sm text-slate-400">{releaseNotes?.versionLabel ?? 'Zea.Play'}</p>
+            <p className="text-sm text-slate-400">{releaseVersionLabel(releaseNotes?.versionLabel)}</p>
             {updatedAt && <p className="text-xs text-slate-500">Updated {updatedAt}</p>}
           </div>
           <div className="flex flex-wrap items-center gap-2">

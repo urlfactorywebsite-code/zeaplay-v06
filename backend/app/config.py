@@ -10,6 +10,9 @@ class Settings(BaseSettings):
 
     app_name: str = "Vee Task Manager API"
     environment: str = "development"
+    gemini_api_keys: str = ""
+    gemini_daily_limit: int = 60
+    ai_webhook_url: str = "https://n8n.urlfactory.website/webhook/taskmanger"
     database_url: str = "sqlite:///./vee_task_manager.db"
     db_pool_size: int = 10
     db_max_overflow: int = 20
@@ -27,6 +30,8 @@ class Settings(BaseSettings):
     media_root: str = "./media"
     media_public_base: str = "/uploads"
     storage_provider: str = "local"
+    avatar_max_file_size_mb: int = Field(default=5, ge=1, le=20)
+    avatar_max_pixels: int = Field(default=25000000, ge=1024)
     media_max_file_size_mb: int = 200
     media_presign_rate_limit: int = 30
     media_presign_rate_window_seconds: int = 60
@@ -39,8 +44,8 @@ class Settings(BaseSettings):
     kanban_page_size_per_column: int = 20
     prefetch_pages: int = 3
     minio_endpoint: str = "https://zbucket.urlfactory.website"
-    minio_access_key: Optional[str] = "T4BYLIYMZSo1UlpbblQR"
-    minio_secret_key: Optional[str] = "cmbvXsqzIZpl67FYAjW0l35SUI5F6OCQPVyIVr41"
+    minio_access_key: Optional[str] = None
+    minio_secret_key: Optional[str] = None
     minio_region: str = "us-east-1"
     minio_bucket_attachments: str = "zea-play-attachments"
     minio_bucket_ticket_attachments: str = "zeaplay-ticket-attachments"
@@ -91,16 +96,23 @@ class Settings(BaseSettings):
             "http://localhost:3001",
             "http://localhost:3002",
             "http://frontend:80",
-            "http://127.0.0.1:8000",
-            "http://localhost:8000",
+            "http://127.0.0.1:7211",
+            "http://localhost:7211",
             "http://127.0.0.1:3000",
+<<<<<<< ours
             "http://localhost:6300",
             "http://127.0.0.1:6300",
             "http://173.212.192.6:6300",
+=======
+            "http://localhost:7300",
+            "http://127.0.0.1:7300",
+            "http://173.212.192.6:7300",
+>>>>>>> theirs
             "http://173.212.192.6",
+            "https://todoplay.urlfactory.website",
             "https://playapi.zeacrm.com",
             "https://play.zeacrm.com",
-            "http://173.212.192.6:6211",
+            "http://173.212.192.6:7211",
         ]
     )
     cors_allow_credentials: bool = True

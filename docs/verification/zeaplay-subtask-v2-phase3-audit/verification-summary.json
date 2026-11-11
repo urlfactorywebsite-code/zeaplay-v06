@@ -1,0 +1,124 @@
+{
+  "test_results": {
+    "baseline-phase3.xml": {
+      "tests": "26",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "3",
+      "time": "62.923"
+    },
+    "audit-before.xml": {
+      "tests": "4",
+      "failures": "3",
+      "errors": "0",
+      "skipped": "1",
+      "time": "10.013"
+    },
+    "stale-summary-before.xml": {
+      "tests": "1",
+      "failures": "1",
+      "errors": "0",
+      "skipped": "0",
+      "time": "4.846"
+    },
+    "stale-summary-after.xml": {
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "4.231"
+    },
+    "full-sqlite.xml": {
+      "tests": "215",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "15",
+      "time": "281.398"
+    },
+    "full-postgres.xml": {
+      "tests": "153",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "249.433"
+    },
+    "certified-postgres.xml": {
+      "tests": "61",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "117.344"
+    },
+    "certified-sqlite.xml": {
+      "tests": "105",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "11",
+      "time": "169.845"
+    },
+    "migration-final-postgres.xml": {
+      "tests": "2",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "5.957"
+    },
+    "migration-final-sqlite.xml": {
+      "tests": "2",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "5.677"
+    },
+    "per-scope-final-sqlite.xml": {
+      "tests": "8",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "17.643"
+    }
+  },
+  "full_collection_baseline": {
+    "pre_audit": [
+      {
+        "module": "backend.tests.test_generate_token",
+        "cause": "SQLite missing to_tsvector"
+      },
+      {
+        "module": "backend.tests.test_oauth2_server",
+        "cause": "SQLite missing to_tsvector"
+      },
+      {
+        "module": "backend.tests.test_task_list",
+        "cause": "SQLite missing to_tsvector"
+      },
+      {
+        "module": "backend.tests.test_ticket_tenant_permissions",
+        "cause": "SQLite missing to_tsvector"
+      }
+    ],
+    "current": [
+      {
+        "module": "backend.tests.test_generate_token",
+        "cause": "SQLite missing to_tsvector"
+      },
+      {
+        "module": "backend.tests.test_oauth2_server",
+        "cause": "SQLite missing to_tsvector"
+      },
+      {
+        "module": "backend.tests.test_task_list",
+        "cause": "SQLite missing to_tsvector"
+      },
+      {
+        "module": "backend.tests.test_ticket_tenant_permissions",
+        "cause": "SQLite missing to_tsvector"
+      }
+    ]
+  },
+  "changed_backend_file_count": 11,
+  "all_changed_source_matches_tested_copy": true,
+  "all_existing_before_hashes_match_pre_audit_copy": true,
+  "installed_or_production_migration": "NOT RUN",
+  "cleanup": "PASS: exact owned PostgreSQL container removed; no running application container altered"
+}

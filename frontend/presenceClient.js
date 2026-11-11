@@ -1,7 +1,7 @@
 import { io } from 'socket.io-client';
 
 export const connectPresence = ({ token, onOnline, onOffline }) => {
-  const presenceUrl = import.meta.env.VITE_PRESENCE_URL || 'http://localhost:6212';
+  const presenceUrl = import.meta.env.VITE_PRESENCE_URL || 'http://localhost:7212';
   const socket = io(presenceUrl, {
     auth: { token },
     transports: ['websocket', 'polling'],

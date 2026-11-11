@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from contextlib import closing
-from datetime import datetime
-from io import BytesIO
-from typing import Optional, Tuple
+from datetime import UTC, datetime
 from uuid import uuid4
 
 try:
@@ -15,19 +14,19 @@ except ModuleNotFoundError:
     class ClientError(Exception):
         """Fallback exception when botocore isn't installed."""
 
-        pass
 from fastapi import HTTPException, status
-from PIL import Image, ImageOps
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..avatar_utils import apply_avatar_crop as _apply_crop
 from ..config import get_settings
 from ..storage.minio import build_media_object_key, get_minio_client, sanitize_filename
 
 try:
     import magic
 except Exception:
+    logging.getLogger(__name__).debug("Optional MIME detection is unavailable", exc_info=True)
     magic = None
 
 settings = get_settings()
@@ -41,7 +40,7 @@ MAX_SIZE_BYTES = {
     "videos": 200 * 1024 * 1024,
     "documents": 20 * 1024 * 1024,
     "zip": 50 * 1024 * 1024,
-    "avatar": 5 * 1024 * 1024,
+    "avatar": settings.avatar_max_file_size_mb * 1024 * 1024,
 }
 
 ALLOWED_CONTENT_TYPES = {
@@ -74,9 +73,6 @@ ALLOWED_CONTENT_TYPES = {
         "image/jpeg",
         "image/png",
         "image/webp",
-        "image/gif",
-        "image/svg+xml",
-        "image/avif",
     },
 }
 
@@ -87,8 +83,6 @@ TAB_TO_MEDIA_TYPE = {
     "zip": models.MediaFileTypeEnum.ZIP,
 }
 
-ALLOWED_AVATAR_FORMATS = {"JPEG", "PNG", "WEBP", "GIF"}
-AVATAR_SIZES = (256, 512)
 SNIFF_BYTES = 4096
 
 _MAGIC_MIME = None
@@ -96,6 +90,7 @@ if magic is not None:
     try:
         _MAGIC_MIME = magic.Magic(mime=True)
     except Exception:
+        logging.getLogger(__name__).debug("Optional MIME detector could not initialize", exc_info=True)
         _MAGIC_MIME = None
 
 
@@ -103,17 +98,18 @@ def _normalize_content_type(content_type: str) -> str:
     return (content_type or "").split(";")[0].strip().lower()
 
 
-def _sniff_content_type(data: Optional[bytes]) -> Optional[str]:
+def _sniff_content_type(data: bytes | None) -> str | None:
     if not data or _MAGIC_MIME is None:
         return None
     try:
         detected = _MAGIC_MIME.from_buffer(data)
     except Exception:
+        logging.getLogger(__name__).debug("Optional MIME detection failed", exc_info=True)
         return None
     return _normalize_content_type(detected)
 
 
-def _fetch_object_snippet(client, *, bucket: str, object_key: str) -> Optional[bytes]:
+def _fetch_object_snippet(client, *, bucket: str, object_key: str) -> bytes | None:
     try:
         response = client.get_object(
             Bucket=bucket,
@@ -197,10 +193,10 @@ def _get_minio_client():
 def _validate_upload(
     *,
     purpose: str,
-    tab: Optional[str],
+    tab: str | None,
     content_type: str,
     size_bytes: int,
-) -> Tuple[models.MediaFileTypeEnum, str]:
+) -> tuple[models.MediaFileTypeEnum, str]:
     normalized_type = _normalize_content_type(content_type)
     if not normalized_type:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="content_type is required")
@@ -240,8 +236,8 @@ def _validate_upload(
     return media_type, normalized_type
 
 
-def _build_avatar_key(*, user_id: str, filename: str, now: Optional[datetime] = None) -> str:
-    timestamp = now or datetime.utcnow()
+def _build_avatar_key(*, user_id: str, filename: str, now: datetime | None = None) -> str:
+    timestamp = now or datetime.now(UTC).replace(tzinfo=None)
     safe_name = sanitize_filename(filename)
     return f"avatars/{user_id}/{timestamp:%Y}/{timestamp:%m}/{uuid4().hex}_{safe_name}"
 
@@ -281,11 +277,11 @@ def presign_media_upload(
     *,
     user: models.User,
     purpose: str,
-    tab: Optional[str],
+    tab: str | None,
     file_name: str,
     content_type: str,
     size_bytes: int,
-) -> Tuple[models.MediaFile, str, int]:
+) -> tuple[models.MediaFile, str, int]:
     media_type, normalized_type = _validate_upload(
         purpose=purpose,
         tab=tab,
@@ -336,7 +332,7 @@ def confirm_media_upload(
     *,
     user: models.User,
     file_id: str,
-    crop_metadata: Optional[dict] = None,
+    crop_metadata: dict | None = None,
 ) -> models.MediaFile:
     media_file = db.get(models.MediaFile, file_id)
     if not media_file or media_file.deleted_at is not None:
@@ -345,9 +341,12 @@ def confirm_media_upload(
     if user.role not in {models.RoleEnum.ADMIN, models.RoleEnum.OWNER} and media_file.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to confirm this upload")
 
+    owner = db.get(models.User, media_file.user_id)
+    if not owner or owner.tenant_id != user.tenant_id:
+        raise HTTPException(status_code=404, detail="Media file not found")
     client = _get_minio_client()
     try:
-        client.head_object(Bucket=media_file.bucket, Key=media_file.object_key)
+        metadata = client.head_object(Bucket=media_file.bucket, Key=media_file.object_key)
     except ClientError as exc:
         code = exc.response.get("Error", {}).get("Code", "")
         if code in {"404", "NoSuchKey", "NotFound"}:
@@ -357,6 +356,12 @@ def confirm_media_upload(
             detail="Unable to verify uploaded object",
         ) from exc
 
+    if media_file.media_type == models.MediaFileTypeEnum.AVATAR:
+        from ..avatar_utils import load_avatar_image, max_avatar_bytes
+        if metadata.get("ContentLength", 0) > max_avatar_bytes():
+            raise HTTPException(status_code=413, detail="Avatar exceeds the configured size limit")
+        with closing(client.get_object(Bucket=media_file.bucket, Key=media_file.object_key)["Body"]) as body:
+            load_avatar_image(body.read(max_avatar_bytes() + 1), mime_type=media_file.content_type)
     _enforce_sniffed_type(client=client, media_file=media_file)
 
     if crop_metadata and media_file.media_type != models.MediaFileTypeEnum.AVATAR:
@@ -377,12 +382,12 @@ def list_media_files(
     *,
     user: models.User,
     tab: str,
-    search: Optional[str],
-    from_date: Optional[datetime],
-    to_date: Optional[datetime],
+    search: str | None,
+    from_date: datetime | None,
+    to_date: datetime | None,
     page: int,
     page_size: int,
-) -> Tuple[list[models.MediaFile], int]:
+) -> tuple[list[models.MediaFile], int]:
     normalized_tab = (tab or "").lower()
     media_type = TAB_TO_MEDIA_TYPE.get(normalized_tab)
     if not media_type:
@@ -430,49 +435,9 @@ def delete_media_file(db: Session, *, media_file: models.MediaFile) -> None:
             detail="Failed to delete object from storage",
         ) from exc
 
-    media_file.deleted_at = datetime.utcnow()
+    media_file.deleted_at = datetime.now(UTC).replace(tzinfo=None)
     db.add(media_file)
     db.commit()
-
-
-def _load_avatar_image(data: bytes) -> Image.Image:
-    try:
-        image = Image.open(BytesIO(data))
-        image.load()
-    except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid image data") from exc
-
-    image_format = (image.format or "").upper()
-    if image_format not in ALLOWED_AVATAR_FORMATS:
-        allowed_label = ", ".join(sorted(ALLOWED_AVATAR_FORMATS))
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported image format. Allowed: {allowed_label}",
-        )
-    return image
-
-
-def _apply_crop(image: Image.Image, crop: dict) -> Image.Image:
-    left = max(0, int(round(crop.get("x", 0))))
-    top = max(0, int(round(crop.get("y", 0))))
-    width = max(1, int(round(crop.get("width", image.width))))
-    height = max(1, int(round(crop.get("height", image.height))))
-    right = min(image.width, left + width)
-    bottom = min(image.height, top + height)
-    if right <= left or bottom <= top:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid crop area")
-    return image.crop((left, top, right, bottom))
-
-
-def _encode_webp(image: Image.Image, *, quality: int = 90) -> bytes:
-    buffer = BytesIO()
-    image.save(buffer, format="WEBP", quality=quality, method=6)
-    return buffer.getvalue()
-
-
-def _public_object_url(bucket: str, object_key: str) -> str:
-    base = settings.minio_public_base.rstrip("/")
-    return f"{base}/{bucket}/{object_key}"
 
 
 def finalize_avatar_upload(
@@ -493,56 +458,31 @@ def finalize_avatar_upload(
     if user.role not in {models.RoleEnum.ADMIN, models.RoleEnum.OWNER} and media_file.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to finalize this avatar")
 
+    # A pending upload belongs to its uploader even when the viewer is an admin.
+    if media_file.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not allowed to finalize this avatar")
+    from ..avatar_utils import (
+        avatar_public_url,
+        load_avatar_image,
+        max_avatar_bytes,
+        set_user_avatar_image,
+    )
+    user = db.query(models.User).filter(models.User.id == user.id).with_for_update().one()
     client = _get_minio_client()
-    try:
-        response = client.get_object(Bucket=media_file.bucket, Key=media_file.object_key)
-        raw_bytes = response["Body"].read()
-    except ClientError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to download avatar upload",
-        ) from exc
-
-    image = _load_avatar_image(raw_bytes)
-    if image.mode not in ("RGB", "RGBA"):
-        image = image.convert("RGBA")
+    with closing(client.get_object(Bucket=media_file.bucket, Key=media_file.object_key)["Body"]) as body:
+        image = load_avatar_image(body.read(max_avatar_bytes() + 1), mime_type=media_file.content_type)
     cropped = _apply_crop(image, crop_metadata)
-
-    avatar_key = f"avatars/{media_file.user_id}/avatar.webp"
-    preview_key = f"avatars/{media_file.user_id}/avatar_256.webp"
-
-    for size in AVATAR_SIZES:
-        resized = ImageOps.fit(cropped, (size, size), method=Image.Resampling.LANCZOS)
-        encoded = _encode_webp(resized)
-        target_key = avatar_key if size == 512 else preview_key
-        try:
-            client.put_object(
-                Bucket=media_file.bucket,
-                Key=target_key,
-                Body=encoded,
-                ContentType="image/webp",
-            )
-        except ClientError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Failed to upload processed avatar",
-            ) from exc
-
+    set_user_avatar_image(db, user, image=cropped, actor=user)
     media_file.crop_metadata = crop_metadata
-    db.add(media_file)
-
-    profile_url = _public_object_url(media_file.bucket, avatar_key)
-    user.profile_image_key = avatar_key
-    user.profile_image_url = profile_url
-    db.add(user)
     db.commit()
-    db.refresh(media_file)
     db.refresh(user)
-
     if delete_original:
         try:
             client.delete_object(Bucket=media_file.bucket, Key=media_file.object_key)
         except ClientError:
-            pass
-
-    return media_file, avatar_key, profile_url
+            import logging
+            logging.getLogger(__name__).exception("Unable to clean finalized avatar upload %s", media_file.id)
+        else:
+            media_file.deleted_at = datetime.now(UTC).replace(tzinfo=None)
+            db.commit()
+    return media_file, user.avatar_asset.file_path, avatar_public_url(user.avatar_asset)

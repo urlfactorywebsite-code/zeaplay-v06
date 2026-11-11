@@ -1,0 +1,21 @@
+{
+  "mode": "Real SubtaskEditor, synthetic task and intercepted loopback HTTP; not authenticated end-to-end",
+  "pass": true,
+  "keyboardDeletion": true,
+  "restoration": true,
+  "earnedVsAvailable": true,
+  "noActualTimeMutation": true,
+  "requests": [
+    {
+      "expected_version": 1,
+      "deleted": true
+    },
+    {
+      "expected_version": 2,
+      "deleted": false
+    }
+  ],
+  "mobileNoOverflow": true,
+  "desktopNoOverflow": true,
+  "pageExceptions": []
+}
