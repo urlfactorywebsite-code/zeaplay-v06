@@ -11,11 +11,7 @@ export default defineConfig(({ mode }) => {
 
     return {
       server: {
-<<<<<<< ours
-        port: 6300,
-=======
         port: 7300,
->>>>>>> theirs
         host: '0.0.0.0',
         proxy: {
           '/api': {

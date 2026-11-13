@@ -1,38 +1,33 @@
 """Common FastAPI dependencies."""
 
 import uuid
+import os
 from typing import Any
 
 from fastapi import Depends, HTTPException, status
-from jose import JWTError, jwt
 from sqlalchemy.orm import Session
+from starlette.requests import HTTPConnection
 
-from .auth import oauth2_scheme
+from .auth import decode_token_claims, oauth2_scheme
 from .config import get_settings
 from .database import get_db
 from .models import RoleEnum, User, UserStatusEnum
 from .permissions import API_ADMIN_ROLES
+from .services.auth_sessions import validate_session
 
 settings = get_settings()
 
 
 def _decode_access_token(token: str) -> dict[str, Any]:
     try:
-        payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
-    except JWTError as exc:
+        payload = decode_token_claims(token)
+    except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials",
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
-    token_type = payload.get("token_type")
-    if token_type and token_type != "access":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token type",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
     return payload
 
 
@@ -47,27 +42,30 @@ def _extract_user_id(payload: dict[str, Any]) -> str:
     return str(user_id)
 
 
+async def credential_for_request(connection: HTTPConnection, token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    if token.startswith('mcp_dt.'):
+        if os.environ.get('ZEA_MCP_PHASE4A_ISOLATED') != '1':
+            raise HTTPException(401, 'Invalid or expired credential')
+        from .mcp.authority import downstream_user
+        downstream_user(db, token, connection)
+    return token
+
+
 async def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    token: str = Depends(credential_for_request),
     db: Session = Depends(get_db),
 ) -> User:
     """Return the authenticated user from the JWT bearer token."""
-    payload = _decode_access_token(token)
-    user_id = _extract_user_id(payload)
-    user = db.get(User, user_id)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
-
-    token_tenant = payload.get("tenant_id")
-    if not token_tenant:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token missing tenant identifier")
-    try:
-        token_tenant_uuid = uuid.UUID(str(token_tenant))
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid tenant identifier") from exc
-    if not user.tenant_id or user.tenant_id != token_tenant_uuid:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Tenant mismatch")
-
+    if token.startswith('mcp_dt.'):
+        if os.environ.get('ZEA_MCP_PHASE4A_ISOLATED') != '1':
+            raise HTTPException(401, 'Invalid or expired credential')
+        from .mcp.authority import downstream_user
+        user = downstream_user(db, token)
+    else:
+        payload = _decode_access_token(token)
+        user, _ = validate_session(db, payload)
+    from .services.audit_security import bind_principal
+    bind_principal(user)
     return user
 
 
@@ -97,23 +95,8 @@ async def get_current_api_admin(current_user: User = Depends(get_current_active_
     return current_user
 
 
-def get_tenant_id(token: str = Depends(oauth2_scheme)) -> uuid.UUID:
-    payload = _decode_access_token(token)
-    tenant_id = payload.get("tenant_id")
-    if not tenant_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token missing tenant identifier",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    try:
-        return uuid.UUID(str(tenant_id))
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid tenant identifier",
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from exc
+def get_tenant_id(current_user: User = Depends(get_current_active_user)) -> uuid.UUID:
+    return current_user.tenant_id
 
 
 def require_roles(*required_roles: str):

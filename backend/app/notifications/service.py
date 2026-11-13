@@ -11,8 +11,10 @@ from sqlalchemy.orm import Session
 
 from ..email_utils import EmailDeliveryError
 from ..emails import smtp as email_sender
-from ..models import User
+from ..models import User, UserStatusEnum
 from ..tickets.models import TicketNotification
+from ..tickets.models import Ticket
+from ..tickets.access import ticket_access_predicate
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +92,21 @@ def _render_notification(event_type: str, context: dict[str, Any]) -> tuple[str,
     return title, body
 
 
+def _authorized_recipient(db, user, context):
+    from ..services.notification_access import current_recipient
+    user = current_recipient(db, user)
+    if not user or user.status != UserStatusEnum.ACTIVE or str(user.tenant_id) != str(context.get("tenant_id")):
+        return False
+    try:
+        ticket_id = uuid.UUID(str(context.get("ticket_id")))
+    except (ValueError, TypeError):
+        return False
+    from ..services.notification_access import ticket_module_allowed
+    if not ticket_module_allowed(db, user):
+        return False
+    return bool(db.scalar(select(Ticket.id).where(Ticket.id == ticket_id, ticket_access_predicate(user))))
+
+
 def create_ticket_notifications(
     db: Session,
     *,
@@ -107,6 +124,8 @@ def create_ticket_notifications(
     now = _now()
     notifications: list[TicketNotification] = []
     for user_id in recipients:
+        if str(tenant_id) != str(context.get("tenant_id")) or not _authorized_recipient(db, db.get(User, user_id), context):
+            continue
         notification = TicketNotification(
             tenant_id=tenant_id,
             user_id=user_id,
@@ -137,7 +156,7 @@ def send_ticket_emails(
     users = db.execute(select(User).where(User.id.in_(recipient_lookup))).scalars().all()
 
     for user in users:
-        if not user.email:
+        if not user.email or not _authorized_recipient(db, user, context):
             continue
         email_context = dict(context)
         email_context.update(

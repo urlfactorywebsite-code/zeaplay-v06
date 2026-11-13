@@ -326,6 +326,21 @@
     "icon": "settings.api"
   },
   {
+    "id": "settings.mcp-management",
+    "defaultLabel": "MCP Management",
+    "route": "/settings/mcp-management",
+    "permittedRoles": [
+      "owner",
+      "admin"
+    ],
+    "parentId": "settings",
+    "isSystemProtected": false,
+    "navigationLocation": "settings-tab",
+    "desktop": true,
+    "mobile": true,
+    "icon": "settings.mcp-management"
+  },
+  {
     "id": "settings.logs",
     "defaultLabel": "Logs",
     "route": "/settings/logs",

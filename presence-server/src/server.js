@@ -7,6 +7,7 @@ import jwt from 'jsonwebtoken';
 import { createClient } from 'redis';
 import { Server } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
+import { createPresenceAuthenticator, createSessionValidator, enforcePresenceExpiry, enforcePresenceSession } from './auth.js';
 
 const { version: appVersion } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
@@ -15,6 +16,7 @@ const config = {
   redisUrl: process.env.PRESENCE_REDIS_URL || 'redis://localhost:7379',
   jwtSecret: process.env.PRESENCE_JWT_SECRET || '',
   jwtAlgorithm: process.env.PRESENCE_JWT_ALGORITHM || 'HS256',
+  sessionValidationUrl: process.env.PRESENCE_SESSION_VALIDATION_URL || '',
   eventsChannel: process.env.PRESENCE_EVENTS_CHANNEL || 'presence:events',
   corsOrigins: parseOrigins(process.env.PRESENCE_CORS_ORIGINS),
   chatHistoryLimit: Number.parseInt(process.env.PRESENCE_CHAT_HISTORY_LIMIT || '200', 10),
@@ -92,58 +94,11 @@ function buildChatRoom(spaceId) {
   return `chat:${spaceId}`;
 }
 
-function extractToken(socket) {
-  const authToken = socket.handshake.auth?.token;
-  if (typeof authToken === 'string' && authToken.trim()) {
-    return authToken.trim();
-  }
-  const queryToken = socket.handshake.query?.token;
-  if (typeof queryToken === 'string' && queryToken.trim()) {
-    return queryToken.trim();
-  }
-  const authHeader = socket.handshake.headers.authorization;
-  if (typeof authHeader === 'string') {
-    const [scheme, token] = authHeader.split(/\s+/, 2);
-    if (scheme?.toLowerCase() === 'bearer' && token) {
-      return token.trim();
-    }
-  }
-  return '';
-}
-
-function authenticateSocket(socket, next) {
-  const token = extractToken(socket);
-  if (!token) {
-    next(new Error('Authentication token required'));
-    return;
-  }
-
-  try {
-    const payload = jwt.verify(token, config.jwtSecret, {
-      algorithms: [config.jwtAlgorithm],
-    });
-    if (payload.token_type && payload.token_type !== 'access') {
-      next(new Error('Invalid token type'));
-      return;
-    }
-
-    const userId = String(payload.user_id || payload.sub || '').trim();
-    if (!userId) {
-      next(new Error('Token missing user id'));
-      return;
-    }
-
-    socket.data.user = {
-      id: userId,
-      tenantId: String(payload.tenant_id || 'default'),
-      roles: Array.isArray(payload.roles) ? payload.roles : [],
-      scopes: Array.isArray(payload.scopes) ? payload.scopes : [],
-    };
-    next();
-  } catch {
-    next(new Error('Invalid authentication token'));
-  }
-}
+const validateSession = createSessionValidator({ url: config.sessionValidationUrl });
+const authenticateSocket = createPresenceAuthenticator({
+  validateSession,
+  jwt, secret: config.jwtSecret, algorithm: config.jwtAlgorithm,
+});
 
 async function publishPresenceEvent(type, profile) {
   const payload = {
@@ -325,6 +280,8 @@ app.get('/health', async (_req, res) => {
 });
 
 io.on('connection', async (socket) => {
+  if (!enforcePresenceExpiry(socket)) return;
+  enforcePresenceSession(socket, validateSession);
   const profile = socket.data.user;
   console.log(`[presence] socket connected user=${profile.id} tenant=${profile.tenantId}`);
 

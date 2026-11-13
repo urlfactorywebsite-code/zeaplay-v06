@@ -30,12 +30,15 @@ const Logs = React.lazy(() => import('./pages/Logs'));
 const ToolLibrary = React.lazy(() => import('./pages/ToolLibrary'));
 const MasterControl = React.lazy(() => import('./pages/MasterControl'));
 const SidebarManagement = React.lazy(() => import('./pages/SidebarManagement'));
+const McpManagement = React.lazy(() => import('./pages/McpManagement'));
+const McpConsent = React.lazy(() => import('./pages/McpConsent'));
 
 const settingsPages: Record<SettingsTabKey, React.ReactElement> = {
     profile: <ProfileSettings />,
     support: <SupportForm isOpen embedded onClose={() => {}} />,
     'master-control': <MasterControl />,
     api: <ApiOverview />,
+    'mcp-management': <McpManagement />,
     logs: <Logs />,
     'media-library': <MediaLibraryPage />,
     'sidebar-management': <SidebarManagement />,
@@ -64,6 +67,7 @@ const AppRoutes: React.FC = () => {
                 <Route index element={<Navigate to={user?.role === Role.USER ? "/dashboard" : "/tasks"} replace />} />
                 
                 <Route path="dashboard" element={<ProtectedRoute roles={[Role.USER, Role.MANAGER, Role.ADMIN, Role.OWNER]}><Dashboard /></ProtectedRoute>} />
+                <Route path="mcp/consent" element={<McpConsent />} />
                 <Route path="tasks/*" element={<ProtectedRoute roles={[Role.USER, Role.MANAGER, Role.ADMIN, Role.OWNER]} validateNavigation={false}><AllTasks /></ProtectedRoute>} />
                 <Route path="admin/users" element={<ProtectedRoute roles={[Role.MANAGER, Role.ADMIN, Role.OWNER]}><Users /></ProtectedRoute>} />
                 <Route path="admin/rewards" element={<ProtectedRoute roles={[Role.MANAGER, Role.ADMIN, Role.OWNER]}><Navigate to="/achievements?tab=rewards" replace /></ProtectedRoute>} />

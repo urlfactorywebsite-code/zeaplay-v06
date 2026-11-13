@@ -93,7 +93,8 @@ const Login: React.FC = () => {
     const resolvedTheme = useResolvedTheme(theme as ThemeMode);
     const navigate = useNavigate();
     const location = useLocation();
-    const from = location.state?.from?.pathname || '/';
+    const from = location.state?.from?.pathname
+        ? location.state.from.pathname + (location.state.from.search || '') : '/';
 
     const isDark = resolvedTheme === 'dark';
     const isColorful = resolvedTheme === 'colorful';

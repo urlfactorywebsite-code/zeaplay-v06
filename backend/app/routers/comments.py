@@ -10,7 +10,7 @@ from ..dependencies import get_current_active_user
 from ..integrations import trigger_n8n_event
 from ..services import notifications as notification_service
 from ..services.badge_engine import BadgeEvent, process_badge_event
-from .tasks import _ensure_task_tenant
+from ..services.task_access import ensure_task_update_access
 
 router = APIRouter(prefix="/comments", tags=["comments"])
 
@@ -23,11 +23,7 @@ def _get_task(db: Session, task_id: str) -> models.Task:
 
 
 def _ensure_comment_access(task: models.Task, user: models.User) -> None:
-    _ensure_task_tenant(task, user)
-    if user.role in {models.RoleEnum.ADMIN, models.RoleEnum.MANAGER, models.RoleEnum.OWNER}:
-        return
-    if task.created_by_id != user.id and task.assigned_to_id != user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot access comments for this task")
+    ensure_task_update_access(task, user)
 
 
 @router.get("/task/{task_id}", response_model=List[schemas.CommentRead])
@@ -56,7 +52,7 @@ def create_comment(
 ) -> schemas.CommentRead:
     task = _get_task(db, payload.task_id)
 
-    if current_user.role not in {models.RoleEnum.ADMIN, models.RoleEnum.MANAGER, models.RoleEnum.OWNER} and payload.user_id != current_user.id:
+    if payload.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only comment as yourself")
 
     _ensure_comment_access(task, current_user)

@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+import os
 from typing import Generator
 
 from sqlalchemy import create_engine, inspect, text
@@ -52,7 +53,8 @@ def _ensure_task_group_column() -> None:
         pass
 
 
-_ensure_task_group_column()
+if os.environ.get("ZEA_ALEMBIC_MIGRATION") != "1":
+    _ensure_task_group_column()
 
 
 def _ensure_task_followers_table() -> None:
@@ -65,7 +67,11 @@ def _ensure_task_followers_table() -> None:
     """
     try:
         inspector = inspect(engine)
-        if "task_followers" in inspector.get_table_names():
+        tables = set(inspector.get_table_names())
+        # An empty/uninitialized database has no FK targets yet. Leave its
+        # initialization or restoration to the operator; startup schema gates
+        # must still reject missing durable authentication/audit migrations.
+        if "task_followers" in tables or not {"tasks", "users"}.issubset(tables):
             return
         with engine.begin() as conn:
             if is_sqlite:
@@ -102,7 +108,8 @@ def _ensure_task_followers_table() -> None:
         pass
 
 
-_ensure_task_followers_table()
+if os.environ.get("ZEA_ALEMBIC_MIGRATION") != "1":
+    _ensure_task_followers_table()
 
 
 def _ensure_user_profile_columns() -> None:
@@ -137,7 +144,8 @@ def _ensure_user_profile_columns() -> None:
         pass
 
 
-_ensure_user_profile_columns()
+if os.environ.get("ZEA_ALEMBIC_MIGRATION") != "1":
+    _ensure_user_profile_columns()
 
 
 def get_db() -> Generator:

@@ -6,10 +6,13 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Importing metadata for Alembic must never run legacy schema repair helpers.
+os.environ["ZEA_ALEMBIC_MIGRATION"] = "1"
 
 from app.config import get_settings  # noqa: E402
 from app.database import Base  # noqa: E402
 import app.models  # noqa: F401,E402
+import app.session_models  # noqa: F401,E402
 import app.tickets.models  # noqa: F401,E402
 import app.backups.models  # noqa: F401,E402
 

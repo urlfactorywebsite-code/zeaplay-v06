@@ -8,15 +8,18 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..auth import (
-    create_access_token,
-    create_refresh_token,
+    create_presence_token,
+    decode_token_claims,
+    decode_presence_claims,
+    oauth2_scheme,
     hash_password,
+    PRESENCE_TOKEN_MINUTES,
     verify_password,
 )
 from ..dependencies import get_current_active_user, get_current_api_admin
 from ..database import get_db
 from ..config import get_settings
-from ..services import audit_logger
+from ..services import audit_logger, auth_sessions
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 settings = get_settings()
@@ -77,11 +80,13 @@ def register_user(payload: schemas.UserCreate, db: Session = Depends(get_db)) ->
         )
         db.add(user)
         db.flush()
+    token = auth_sessions.issue_login(db, user)
     db.commit()
     db.refresh(user)
 
     audit_logger.log_event(
         audit_logger.AuditLogInput(
+            tenant_id=user.tenant_id if user else None,
             action="USER_REGISTERED",
             category=models.AuditLogCategoryEnum.USER,
             actor_id=str(user.id),
@@ -94,11 +99,6 @@ def register_user(payload: schemas.UserCreate, db: Session = Depends(get_db)) ->
         )
     )
 
-    claims = _build_token_claims(user)
-    token = schemas.Token(
-        access_token=create_access_token(user.id, extra_claims=claims),
-        refresh_token=create_refresh_token(user.id, extra_claims=claims),
-    )
     return schemas.AuthResponse(token=token, user=user)
 
 
@@ -132,10 +132,11 @@ async def _extract_credentials(request: Request) -> tuple[str, str]:
 @router.post("/login", response_model=schemas.AuthResponse)
 async def login(request: Request, db: Session = Depends(get_db)) -> schemas.AuthResponse:
     username, password = await _extract_credentials(request)
-    user = db.execute(select(models.User).where(models.User.email == username)).scalar_one_or_none()
+    user = db.execute(select(models.User).where(models.User.email == username).with_for_update().execution_options(populate_existing=True)).scalar_one_or_none()
     if not user or not verify_password(password, user.hashed_password):
         audit_logger.log_event(
             audit_logger.AuditLogInput(
+                tenant_id=user.tenant_id if user else None,
                 action="USER_LOGIN_FAILED",
                 category=models.AuditLogCategoryEnum.SECURITY,
                 actor_id=str(user.id) if user else None,
@@ -156,6 +157,7 @@ async def login(request: Request, db: Session = Depends(get_db)) -> schemas.Auth
     if user.status != models.UserStatusEnum.ACTIVE:
         audit_logger.log_event(
             audit_logger.AuditLogInput(
+                tenant_id=user.tenant_id if user else None,
                 action="USER_LOGIN_BLOCKED",
                 category=models.AuditLogCategoryEnum.SECURITY,
                 actor_id=str(user.id),
@@ -172,13 +174,11 @@ async def login(request: Request, db: Session = Depends(get_db)) -> schemas.Auth
         )
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User account is deactivated")
 
-    extra_claims = _build_token_claims(user)
-    token = schemas.Token(
-        access_token=create_access_token(user.id, extra_claims=extra_claims),
-        refresh_token=create_refresh_token(user.id, extra_claims=extra_claims),
-    )
+    token = auth_sessions.issue_login(db, user)
+    db.commit()
     audit_logger.log_event(
         audit_logger.AuditLogInput(
+            tenant_id=user.tenant_id if user else None,
             action="USER_LOGIN",
             category=models.AuditLogCategoryEnum.USER,
             actor_id=str(user.id),
@@ -198,32 +198,7 @@ def refresh_token(
     payload: schemas.RefreshRequest,
     db: Session = Depends(get_db),
 ) -> schemas.Token:
-    from ..auth import decode_token
-
-    try:
-        token_payload = decode_token(payload.refresh_token, refresh=True)
-    except ValueError as exc:
-        audit_logger.log_event(
-            audit_logger.AuditLogInput(
-                action="TOKEN_REFRESH_FAILED",
-                category=models.AuditLogCategoryEnum.SECURITY,
-                source=models.AuditLogSourceEnum.API,
-                severity=models.AuditLogSeverityEnum.WARNING,
-                status=models.AuditLogStatusEnum.FAILED,
-                reason="Invalid refresh token",
-            )
-        )
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token") from exc
-
-    user = db.get(models.User, token_payload.sub)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-
-    extra_claims = _build_token_claims(user)
-    return schemas.Token(
-        access_token=create_access_token(user.id, extra_claims=extra_claims),
-        refresh_token=create_refresh_token(user.id, extra_claims=extra_claims),
-    )
+    return auth_sessions.rotate(db, payload.refresh_token)
 
 
 @router.get("/me", response_model=schemas.UserRead)
@@ -246,6 +221,7 @@ def forgot_password(
         pass
     audit_logger.log_event(
         audit_logger.AuditLogInput(
+            tenant_id=user.tenant_id if user else None,
             action="USER_PASSWORD_RESET_REQUESTED",
             category=models.AuditLogCategoryEnum.USER,
             actor_id=str(user.id) if user else None,
@@ -264,10 +240,16 @@ def forgot_password(
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(
     request: Request,
+    credential: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user),
 ) -> None:
+    claims = decode_token_claims(credential)
+    auth_sessions.revoke_session(db, claims)
+    db.commit()
     audit_logger.log_event(
         audit_logger.AuditLogInput(
+            tenant_id=current_user.tenant_id,
             action="USER_LOGOUT",
             category=models.AuditLogCategoryEnum.USER,
             actor_id=str(current_user.id),
@@ -285,19 +267,17 @@ def logout(
 def generate_scoped_token(
     payload: schemas.TokenMintRequest,
     current_user: models.User = Depends(get_current_api_admin),
+    credential: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
 ) -> schemas.TokenMintResponse:
-    """Issue an access token for the current user with optional custom scopes."""
+    """Issue a separately revocable API session with the requested lifetime."""
     normalized_scopes = sorted(set(payload.scopes))
     expires_minutes = payload.expires_in_minutes or settings.access_token_expire_minutes
-    extra_claims = _build_token_claims(current_user)
-    access_token = create_access_token(
-        current_user.id,
-        expires_minutes=expires_minutes,
-        scopes=normalized_scopes or None,
-        extra_claims=extra_claims,
-    )
-    issued_at = datetime.now(timezone.utc)
-    expires_at = issued_at + timedelta(minutes=expires_minutes)
+    auth_sessions.lock_user(db, current_user.id)
+    current_user, _ = auth_sessions.validate_session(db, decode_token_claims(credential))
+    access_token, session = auth_sessions.issue_api(db, current_user, minutes=expires_minutes, scopes=normalized_scopes)
+    issued_at, expires_at = session.created_at, session.expires_at
+    db.commit()
     return schemas.TokenMintResponse(
         access_token=access_token,
         token_type="bearer",
@@ -312,18 +292,16 @@ def generate_scoped_token(
 @router.get("/presence-token", response_model=schemas.TokenMintResponse)
 def issue_presence_token(
     current_user: models.User = Depends(get_current_active_user),
+    credential: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
 ) -> schemas.TokenMintResponse:
-    """Issue a short-lived token for the presence socket."""
-    expires_minutes = 60
-    extra_claims = _build_token_claims(current_user)
-    access_token = create_access_token(
-        current_user.id,
-        expires_minutes=expires_minutes,
-        scopes=["presence"],
-        extra_claims=extra_claims,
-    )
+    """Bind presence to the same revocable session as the requesting access JWT."""
+    current_user, session = auth_sessions.validate_session(db, decode_token_claims(credential))
     issued_at = datetime.now(timezone.utc)
-    expires_at = issued_at + timedelta(minutes=expires_minutes)
+    expires_at = min(session.expires_at, issued_at + timedelta(minutes=PRESENCE_TOKEN_MINUTES))
+    access_token = create_presence_token(current_user.id, tenant_id=str(current_user.tenant_id),
+        roles=[current_user.role.value], sid=session.id, auth_epoch=session.auth_epoch,
+        jti=str(uuid.uuid4()), expires_at=expires_at)
     return schemas.TokenMintResponse(
         access_token=access_token,
         token_type="bearer",
@@ -333,3 +311,19 @@ def issue_presence_token(
         subject=current_user.id,
         label="Presence socket",
     )
+
+
+@router.post("/presence/validate", status_code=status.HTTP_204_NO_CONTENT)
+def validate_presence_session(credential: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    """Read-only presence admission/revalidation. A presence JWT grants only this check."""
+    try:
+        claims = decode_presence_claims(credential)
+    except ValueError as exc:
+        raise auth_sessions.denied() from exc
+    auth_sessions.validate_session(db, claims)
+
+
+@router.post("/logout-all", status_code=status.HTTP_204_NO_CONTENT)
+def logout_all(current_user: models.User = Depends(get_current_active_user), db: Session = Depends(get_db)):
+    auth_sessions.invalidate_user(db, current_user.id)
+    db.commit()

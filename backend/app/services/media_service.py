@@ -26,6 +26,7 @@ from ..models import (
 )
 from ..storage import GoogleDriveAdapter, LocalAdapter, StorageAdapter, SupabaseAdapter
 from ..utils.image import probe_image_dimensions
+from .media_access import require_media_owner_tenant
 
 try:
     import magic  # type: ignore
@@ -168,6 +169,8 @@ async def create_media_item(
     category: Optional[MediaCategoryEnum] = None,
     original_id: Optional[str] = None,
 ) -> MediaItem:
+    if original_id:
+        get_media_item(db, media_id=original_id, user=owner)
     data = await upload.read()
     if not data:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No file uploaded")
@@ -223,7 +226,10 @@ def list_media_items(
     page = max(1, page)
     page_size = max(1, min(page_size, MAX_PAGE_SIZE))
 
-    query = db.query(MediaItem).filter(MediaItem.deleted_at.is_(None))
+    query = db.query(MediaItem).join(User, User.id == MediaItem.owner_id).filter(
+        MediaItem.deleted_at.is_(None), User.tenant_id == user.tenant_id,
+        User.tenant_id.is_not(None),
+    )
     if not _is_admin(user):
         query = query.filter(MediaItem.owner_id == user.id)
     elif owner_id:
@@ -250,7 +256,8 @@ def list_media_items(
 def get_media_item(db: Session, *, media_id: str, user: User) -> MediaItem:
     item = db.get(MediaItem, media_id)
     if not item or item.deleted_at is not None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media item not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media not found")
+    require_media_owner_tenant(db, owner_id=item.owner_id, user=user)
     _ensure_owner(item, user)
     return item
 

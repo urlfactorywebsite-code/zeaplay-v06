@@ -1,6 +1,6 @@
 import React, { Suspense, useEffect, useRef } from 'react';
 import { matchPath, NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Settings as SettingsIcon, UserRound, LifeBuoy, ShieldCheck, Code, ScrollText, Images, PanelLeft } from 'lucide-react';
+import { Settings as SettingsIcon, UserRound, LifeBuoy, ShieldCheck, Code, ScrollText, Images, PanelLeft, Plug } from 'lucide-react';
 import { useNavigation } from '../hooks/useNavigation';
 import PageLoader from '../components/loading/PageLoader';
 import { SettingsTabKey } from '../utils/settingsNavigation';
@@ -11,6 +11,7 @@ const tabIcons = {
   support: LifeBuoy,
   'master-control': ShieldCheck,
   api: Code,
+  'mcp-management': Plug,
   logs: ScrollText,
   'media-library': Images,
   'sidebar-management': PanelLeft,

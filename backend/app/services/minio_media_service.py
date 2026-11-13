@@ -22,6 +22,7 @@ from .. import models
 from ..avatar_utils import apply_avatar_crop as _apply_crop
 from ..config import get_settings
 from ..storage.minio import build_media_object_key, get_minio_client, sanitize_filename
+from .media_access import require_media_owner_tenant
 
 try:
     import magic
@@ -262,7 +263,11 @@ def generate_presigned_get(bucket: str, object_key: str) -> str:
     try:
         return client.generate_presigned_url(
             "get_object",
-            Params={"Bucket": bucket, "Key": object_key},
+            # The object may carry old public cache metadata. The signed
+            # response override prevents a shared cache from retaining bytes
+            # beyond the authorized delivery, including after URL expiration.
+            Params={"Bucket": bucket, "Key": object_key,
+                    "ResponseCacheControl": "private, no-store, max-age=0"},
             ExpiresIn=EXPIRES_IN_SECONDS,
         )
     except Exception as exc:
@@ -336,14 +341,14 @@ def confirm_media_upload(
 ) -> models.MediaFile:
     media_file = db.get(models.MediaFile, file_id)
     if not media_file or media_file.deleted_at is not None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media file not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media not found")
 
+    # Tenant admission precedes role checks so foreign IDs do not reveal existence
+    # through a different response for ordinary users or Managers.
+    require_media_owner_tenant(db, owner_id=media_file.user_id, user=user)
     if user.role not in {models.RoleEnum.ADMIN, models.RoleEnum.OWNER} and media_file.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to confirm this upload")
 
-    owner = db.get(models.User, media_file.user_id)
-    if not owner or owner.tenant_id != user.tenant_id:
-        raise HTTPException(status_code=404, detail="Media file not found")
     client = _get_minio_client()
     try:
         metadata = client.head_object(Bucket=media_file.bucket, Key=media_file.object_key)
@@ -396,7 +401,13 @@ def list_media_files(
     page = max(1, page)
     page_size = max(1, min(page_size, MAX_PAGE_SIZE))
 
-    query = db.query(models.MediaFile).filter(models.MediaFile.deleted_at.is_(None))
+    query = db.query(models.MediaFile).join(
+        models.User, models.User.id == models.MediaFile.user_id,
+    ).filter(
+        models.MediaFile.deleted_at.is_(None),
+        models.User.tenant_id == user.tenant_id,
+        models.User.tenant_id.is_not(None),
+    )
     query = query.filter(models.MediaFile.media_type == media_type)
     query = query.filter(models.MediaFile.status == models.MediaFileStatusEnum.CONFIRMED)
 
@@ -450,7 +461,8 @@ def finalize_avatar_upload(
 ) -> tuple[models.MediaFile, str, str]:
     media_file = db.get(models.MediaFile, file_id)
     if not media_file or media_file.deleted_at is not None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media file not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media not found")
+    require_media_owner_tenant(db, owner_id=media_file.user_id, user=user)
     if media_file.media_type != models.MediaFileTypeEnum.AVATAR:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Media file is not an avatar upload")
     if media_file.status != models.MediaFileStatusEnum.CONFIRMED:

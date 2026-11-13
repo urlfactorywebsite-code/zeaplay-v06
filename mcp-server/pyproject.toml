@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools==84.1.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zeaplay-mcp-prototype"
+version = "0.1.0"
+description = "Read-only ZeaPlay MCP with offline fixtures and isolated authenticated REST"
+requires-python = ">=3.11"
+dependencies = ["mcp==2.3.0", "pydantic==2.14.3", "anyio==4.16.0", "httpx2==2.16.0", "uvicorn==0.54.0"]
+
+[project.optional-dependencies]
+test = ["pytest==9.0.3", "jsonschema==4.26.0"]
+
+[project.scripts]
+zeaplay-mcp = "zeaplay_mcp.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "BLE", "LOG", "PLW1510"]
+

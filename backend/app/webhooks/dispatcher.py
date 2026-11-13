@@ -190,6 +190,7 @@ def _attempt_delivery(
             delivery.updated_at = now
             audit_logger.log_event(
                 audit_logger.AuditLogInput(
+                    tenant_id=subscription.tenant_id,
                     entity_type="webhook_configuration", entity_id=str(subscription.tenant_id),
                     action="WEBHOOK_DELIVERED",
                     category=app_models.AuditLogCategoryEnum.AUTOMATION,
@@ -212,6 +213,7 @@ def _attempt_delivery(
         delivery.updated_at = now
         audit_logger.log_event(
             audit_logger.AuditLogInput(
+                    tenant_id=subscription.tenant_id,
                     entity_type="webhook_configuration", entity_id=str(subscription.tenant_id),
                 action="WEBHOOK_FAILED",
                 category=app_models.AuditLogCategoryEnum.AUTOMATION,
@@ -237,6 +239,7 @@ def _attempt_delivery(
         delivery.updated_at = now
         audit_logger.log_event(
             audit_logger.AuditLogInput(
+                    tenant_id=subscription.tenant_id,
                     entity_type="webhook_configuration", entity_id=str(subscription.tenant_id),
                 action="WEBHOOK_FAILED",
                 category=app_models.AuditLogCategoryEnum.AUTOMATION,

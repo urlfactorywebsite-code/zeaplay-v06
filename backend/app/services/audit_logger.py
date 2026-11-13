@@ -317,6 +317,7 @@ def queue_log(payload: Dict[str, Any]) -> None:
 class AuditLogInput:
     action: str
     category: models.AuditLogCategoryEnum
+    tenant_id: Any = None
     actor_id: Optional[str] = None
     actor_role: Optional[str] = None
     entity_type: Optional[str] = None
@@ -338,6 +339,7 @@ class AuditLogInput:
 
 
 def log_event(entry: AuditLogInput) -> None:
+    from .audit_security import event_tenant, redact
     context = _request_context(entry.request)
     client_meta = _parse_user_agent(context["user_agent"])
     metadata_payload = dict(entry.metadata or {})
@@ -351,6 +353,7 @@ def log_event(entry: AuditLogInput) -> None:
         },
     )
     payload = {
+        "tenant_id": event_tenant(entry),
         "actor_id": entry.actor_id,
         "actor_role": entry.actor_role,
         "action": entry.action,
@@ -375,4 +378,4 @@ def log_event(entry: AuditLogInput) -> None:
         "metadata_payload": metadata_payload,
         "created_at": entry.created_at,
     }
-    queue_log(payload)
+    queue_log(redact(payload))

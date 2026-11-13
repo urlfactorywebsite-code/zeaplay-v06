@@ -71,7 +71,7 @@ def test_defaults_and_registry_are_safe_and_unique(harness):
     # The sidebar parent and its protected default tab intentionally share /tasks.
     assert len({page["route"] for page in value["pages"]}) == len(BY_ID) - 1
     assert BY_ID["tasks.list"]["route"] == BY_ID["tasks"]["route"] == "/tasks"
-    assert len([page for page in value["pages"] if page["navigationLocation"] == "settings-tab"]) == 7
+    assert len([page for page in value["pages"] if page["navigationLocation"] == "settings-tab"]) == 8
 
 
 @pytest.mark.parametrize("role", list(models.RoleEnum))
@@ -325,7 +325,11 @@ def test_navigation_audit_records_never_cross_tenants(harness):
     with Session(engine) as db:
         records = db.scalars(_apply_scope_filters(select(models.AuditLog), current_user=user, db=db)).all()
         assert len(records) == 1 and records[0].entity_id == str(user.tenant_id)
+        assert records[0].tenant_id == user.tenant_id
     user.tenant_id = tenant_a
+    with Session(engine) as db:
+        records = db.scalars(_apply_scope_filters(select(models.AuditLog), current_user=user, db=db)).all()
+        assert len(records) == 1 and records[0].tenant_id == tenant_a
 
 
 def test_support_proxy_preserves_payload_and_authenticates_sender(harness, monkeypatch):

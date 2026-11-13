@@ -76,7 +76,7 @@ def update_navigation(payload: PolicyUpdate, request: Request, db: Session = Dep
                 raise HTTPException(409, "Navigation changed in another session. Discard and reload before saving.") from exc
         # Use the existing audit table in the SAME transaction, so a save cannot
         # succeed without its audit record. No asynchronous best-effort logging.
-        db.add(models.AuditLog(actor_id=str(user.id), actor_role=user.role.value,
+        db.add(models.AuditLog(tenant_id=user.tenant_id, actor_id=str(user.id), actor_role=user.role.value,
             action="NAVIGATION_POLICY_UPDATED", category=models.AuditLogCategoryEnum.SYSTEM,
             entity_type="navigation_policy", entity_id=str(user.tenant_id),
             before=before, after=after, metadata_payload={"tenant_id": str(user.tenant_id), "version": values["version"]},

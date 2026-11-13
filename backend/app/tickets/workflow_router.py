@@ -6,9 +6,10 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..dependencies import get_current_user, get_tenant_id, require_roles
+from ..dependencies import get_current_active_user, get_current_user, get_tenant_id, require_roles
 from ..models import User
 from ..schemas import ApprovalActionPayload, ApprovalRead, TaskRead
+from ..services.task_serialization import serialize_tasks
 from .schemas import (
     PendingApprovalItemRead,
     TicketApprovalActionPayload,
@@ -39,6 +40,8 @@ from .models import TicketApprovalTypeEnum
 
 
 router = APIRouter(prefix="/api", tags=["tickets"])
+# Only the repaired reads get canonical aliases for the prefix-stripping proxy.
+read_router = APIRouter(tags=["tickets"])
 
 
 @router.post("/tickets/{ticket_id}/status", response_model=dict, status_code=status.HTTP_200_OK)
@@ -182,12 +185,17 @@ def list_pending_approvals_handler(
 
 
 @router.get("/tickets/{ticket_id}/tasks", response_model=list[TaskRead])
+@read_router.get("/tickets/{ticket_id}/tasks", response_model=list[TaskRead])
 def list_ticket_tasks_handler(
     ticket_id: uuid.UUID,
     db: Session = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(get_current_active_user),
 ) -> list[TaskRead]:
-    return list_ticket_linked_tasks(db, tenant_id=tenant_id, ticket_id=ticket_id)
+    tasks = list_ticket_linked_tasks(
+        db, tenant_id=tenant_id, ticket_id=ticket_id, current_user=current_user,
+    )
+    return serialize_tasks(tasks, {}, current_user=current_user)
 
 
 @router.post("/tickets/{ticket_id}/tasks", response_model=TaskRead, status_code=status.HTTP_201_CREATED)
@@ -247,17 +255,20 @@ def complete_ticket_task_handler(
 
 
 @router.get("/tickets/{ticket_id}/logs", response_model=TicketAuditLogPage)
+@read_router.get("/tickets/{ticket_id}/logs", response_model=TicketAuditLogPage)
 def list_ticket_logs_handler(
     ticket_id: uuid.UUID,
     page: int = 1,
     page_size: int = 25,
     db: Session = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(get_current_active_user),
 ) -> TicketAuditLogPage:
     return list_ticket_logs(
         db,
         tenant_id=tenant_id,
         ticket_id=ticket_id,
+        current_user=current_user,
         page=page,
         page_size=page_size,
     )

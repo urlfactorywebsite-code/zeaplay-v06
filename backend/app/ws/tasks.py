@@ -11,9 +11,10 @@ from starlette.concurrency import run_in_threadpool
 
 from ..database import SessionLocal
 from ..dependencies import _decode_access_token
-from ..models import User, UserStatusEnum
+from ..models import Task, User, UserStatusEnum
 from ..services.navigation_sockets import bind_socket, socket_allowed
 from ..services.task_activity import _subject
+from ..services.task_access import apply_task_visibility
 
 TASK_PAGES = ("tasks.list", "kanban", "calendar", "gantt", "dashboard")
 
@@ -63,7 +64,9 @@ class TaskConnectionManager:
                 not in {identity[0], getattr(socket.state, "activity_subject", None)}
             ):
                 continue
-            groups.setdefault(identity or id(socket), []).append(socket)
+            # Separate sessions for the same user can be revoked independently.
+            claims = getattr(socket.state, "auth_claims", {})
+            groups.setdefault((identity, claims.get("sid"), claims.get("exp")), []).append(socket)
         # Bound slow-client fanout, and check identity once per event/user rather
         # than once per tab. No cached role/tenant permissions across events.
         slots = asyncio.Semaphore(16)
@@ -72,20 +75,53 @@ class TaskConnectionManager:
             async with slots:
                 first = sockets[0]
                 permitted = await run_in_threadpool(_delivery_allowed, first, subject)
+                visible_message = (await run_in_threadpool(_visible_message, first, message)
+                                   if permitted else None)
                 for socket in sockets:
                     try:
-                        if not permitted:
+                        if not permitted or visible_message is None:
                             await asyncio.wait_for(
                                 socket.close(code=status.WS_1008_POLICY_VIOLATION),
                                 timeout=5,
                             )
                             await self.disconnect(tenant_id, socket)
                             continue
-                        await asyncio.wait_for(socket.send_json(message), timeout=5)
+                        await asyncio.wait_for(socket.send_json(visible_message), timeout=5)
                     except Exception:  # noqa: BLE001 -- isolate broken client transports
                         await self.disconnect(tenant_id, socket)
 
         await asyncio.gather(*(deliver(sockets) for sockets in groups.values()))
+
+
+def _visible_message(socket, message):
+    """Group invalidations must not disclose another assignment's identifiers."""
+    if message.get("type") != "task.changed":
+        return message
+    identity = getattr(socket.state, "navigation_identity", None)
+    if not identity:
+        return None
+    safe = {"type": "task.changed", "tenant_id": identity[1], "action": "invalidate"}
+    primary = message.get("task_id")
+    batch = message.get("task_ids") or []
+    if not isinstance(batch, list):
+        return safe
+    ids = [value for value in [primary, *batch] if isinstance(value, str)]
+    try:
+        with SessionLocal() as db:
+            user = db.get(User, identity[0])
+            if not user or user.status != UserStatusEnum.ACTIVE or str(user.tenant_id) != identity[1]:
+                return None
+            visible = set(db.scalars(apply_task_visibility(
+                select(Task.id).where(Task.id.in_(ids)), user))) if ids else set()
+    except SQLAlchemyError:
+        return safe  # Refetch without disclosing IDs when authorization is unavailable.
+    if isinstance(primary, str) and primary in visible:
+        safe["task_id"] = primary
+    if "task_ids" in message:
+        safe["task_ids"] = [value for value in batch if isinstance(value, str) and value in visible]
+    if (not primary or primary in visible) and all(value in visible for value in ids):
+        safe["action"] = message.get("action", "invalidate")
+    return safe
 
 
 def _delivery_allowed(socket, subject):
@@ -118,6 +154,7 @@ def _watch_subject(socket, subject):
 
 
 def _authenticate_socket(socket, payload):
+    socket.state.auth_claims = payload
     user_id = payload.get("user_id") or payload.get("sub")
     if not user_id:
         return None
@@ -152,6 +189,9 @@ async def _heartbeat(websocket: WebSocket, interval_seconds: int = 25) -> None:
     while True:
         await asyncio.sleep(interval_seconds)
         try:
+            if not await run_in_threadpool(socket_allowed, websocket, TASK_PAGES):
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                return
             await websocket.send_json({"type": "ping"})
         except Exception:  # noqa: BLE001 -- heartbeat must stop on transport failure
             return
@@ -192,6 +232,9 @@ async def tasks_ws(websocket: WebSocket) -> None:
     try:
         while True:
             message = await websocket.receive_json()
+            if not await run_in_threadpool(socket_allowed, websocket, TASK_PAGES):
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                break
             if message.get("type") == "pong":
                 continue
             if message.get("type") == "activity.watch":

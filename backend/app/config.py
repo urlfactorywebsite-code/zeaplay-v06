@@ -99,15 +99,9 @@ class Settings(BaseSettings):
             "http://127.0.0.1:7211",
             "http://localhost:7211",
             "http://127.0.0.1:3000",
-<<<<<<< ours
-            "http://localhost:6300",
-            "http://127.0.0.1:6300",
-            "http://173.212.192.6:6300",
-=======
             "http://localhost:7300",
             "http://127.0.0.1:7300",
             "http://173.212.192.6:7300",
->>>>>>> theirs
             "http://173.212.192.6",
             "https://todoplay.urlfactory.website",
             "https://playapi.zeacrm.com",

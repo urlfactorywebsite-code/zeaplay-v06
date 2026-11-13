@@ -1,0 +1,94 @@
+{
+  "tenant_context": "a1111111-1111-4111-8111-111111111111",
+  "configuration": {
+    "available": false,
+    "persisted": false,
+    "blocker": "Tenant MCP policy storage requires an approved schema. Changes cannot be saved.",
+    "enabled": false,
+    "read_only": true,
+    "allowed_tool_ids": [],
+    "allowed_roles": [],
+    "emergency_disabled": null
+  },
+  "overview": {
+    "service_status": "not_configured",
+    "health_status": "not_monitored",
+    "last_checked_at": null,
+    "total_tools": 5,
+    "enabled_tools": 0,
+    "active_connections": null,
+    "security_mode": "Read-only / remote access blocked",
+    "endpoint": null,
+    "remote_access_enabled": false
+  },
+  "tools": [
+    {
+      "id": "zeaplay_list_tasks",
+      "name": "List tasks",
+      "description": "Read tasks visible to the current user.",
+      "scope": "tasks:read",
+      "read_only": true,
+      "enabled": false,
+      "available": false
+    },
+    {
+      "id": "zeaplay_get_task",
+      "name": "Get task",
+      "description": "Read an authorized task overview.",
+      "scope": "tasks:read",
+      "read_only": true,
+      "enabled": false,
+      "available": false
+    },
+    {
+      "id": "zeaplay_list_overdue_tasks",
+      "name": "List overdue tasks",
+      "description": "Read visible overdue tasks.",
+      "scope": "tasks:read",
+      "read_only": true,
+      "enabled": false,
+      "available": false
+    },
+    {
+      "id": "zeaplay_list_subtasks",
+      "name": "List subtasks",
+      "description": "Read subtasks after parent task authorization.",
+      "scope": "tasks:read",
+      "read_only": true,
+      "enabled": false,
+      "available": false
+    },
+    {
+      "id": "zeaplay_get_workload_summary",
+      "name": "Workload summary",
+      "description": "Read only the current user's workload.",
+      "scope": "workload:read",
+      "read_only": true,
+      "enabled": false,
+      "available": false
+    }
+  ],
+  "connections": {
+    "available": false,
+    "items": [],
+    "reason": "OAuth and delegated user consent are not implemented for MCP."
+  },
+  "security": {
+    "management_authentication": "Existing ZeaPlay session; Owner/Admin only",
+    "mcp_authentication": "Not ready for remote clients",
+    "oauth_delegation": "Not implemented for MCP",
+    "credential_handling": "No MCP credentials issued, accepted or stored by management",
+    "remote_connections": "Unavailable",
+    "restrictions": [
+      "Only the five approved read-only tools",
+      "Current backend task and tenant permissions remain authoritative",
+      "No API key shortcut or production connection creation",
+      "Remote access requires OAuth, consent, durable policy enforcement and deployment review"
+    ]
+  },
+  "activity": {
+    "available": false,
+    "items": [],
+    "reason": "Tenant MCP activity logging is not implemented. No activity data is available."
+  }
+}

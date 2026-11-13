@@ -167,6 +167,7 @@ async def ticket_chat_ws(websocket: WebSocket, ticket_id: str) -> None:
 
     try:
         payload = _decode_access_token(token)
+        websocket.state.auth_claims = payload
         user_id = _extract_user_id(payload)
         tenant_id = _extract_tenant_id(payload)
         ticket_uuid = uuid.UUID(ticket_id)

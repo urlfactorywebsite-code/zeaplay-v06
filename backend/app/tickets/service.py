@@ -7,10 +7,11 @@ from datetime import datetime, timedelta
 from typing import Iterable, Optional
 
 from fastapi import HTTPException, status
-from sqlalchemy import and_, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from ..dependencies import apply_tenant_filter
+from ..services.tenant_users import require_tenant_users
 from .. import models as app_models
 from ..events.bus import emit_ticket_event
 from ..models import RoleEnum, User, UserStatusEnum
@@ -21,11 +22,7 @@ from .models import (
     Ticket,
     TicketActivityLog,
     TicketApproval,
-    TicketApprovalCycle,
-    TicketApprovalCycleStatusEnum,
     TicketApprovalDecisionEnum,
-    TicketApprovalItem,
-    TicketApprovalItemStatusEnum,
     TicketApprovalStatusEnum,
     TicketApprovalTypeEnum,
     TicketApprovalUser,
@@ -107,6 +104,7 @@ def _list_follower_ids(
 def _resolve_default_assignee(
     db: Session,
     *,
+    tenant_id: uuid.UUID,
     department_id: Optional[uuid.UUID],
 ) -> Optional[str]:
     if not department_id:
@@ -114,7 +112,8 @@ def _resolve_default_assignee(
     stmt = (
         select(User)
         .where(
-            User.department_id == department_id,
+            User.tenant_id == tenant_id,
+            User.department_id == str(department_id),
             User.role == RoleEnum.MANAGER,
             User.status == UserStatusEnum.ACTIVE,
         )
@@ -146,6 +145,9 @@ def _set_followers(
         )
     ).scalars().all()
     existing_map = {row.user_id: row for row in existing_rows}
+    require_tenant_users(db, tenant_id, unique_followers, allow_inactive=[
+        row.user_id for row in existing_rows if row.deleted_at is None
+    ])
 
     now = _now()
     for user_id in unique_followers:
@@ -227,14 +229,8 @@ def _apply_role_scope(
     current_user: User,
     roles: Iterable[str],
 ):
-    role_set = _normalize_roles(roles)
-    if _has_role(role_set, "admin", "owner"):
-        return stmt
-    if _has_role(role_set, "manager"):
-        if not current_user.department_id:
-            return stmt.where(False)
-        return stmt.where(Ticket.department_id == str(current_user.department_id))
-    return _apply_my_tickets_filter(stmt, tenant_id=tenant_id, user_id=str(current_user.id))
+    from .access import ticket_access_predicate
+    return stmt.where(ticket_access_predicate(current_user))
 
 
 def _log_activity(
@@ -411,65 +407,13 @@ def get_ticket_for_user(
     current_user: User,
     roles: Iterable[str],
 ) -> Ticket:
+    from .access import ticket_access_predicate
+    if current_user.tenant_id != tenant_id:
+        raise HTTPException(404, "Ticket not found")
     ticket = get_ticket(db, tenant_id=tenant_id, ticket_id=ticket_id)
-    role_set = _normalize_roles(roles)
-    if _has_role(role_set, "admin", "owner"):
+    if db.scalar(select(Ticket.id).where(Ticket.id == ticket.id, ticket_access_predicate(current_user))):
         return ticket
-    if _has_role(role_set, "manager"):
-        if current_user.department_id and str(ticket.department_id) == str(current_user.department_id):
-            return ticket
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to view ticket")
-
-    user_id = str(current_user.id)
-    if ticket.owner_id == user_id or ticket.created_by == user_id:
-        return ticket
-
-    participant = db.execute(
-        select(TicketParticipant)
-        .where(
-            TicketParticipant.tenant_id == tenant_id,
-            TicketParticipant.ticket_id == ticket_id,
-            TicketParticipant.user_id == user_id,
-            TicketParticipant.deleted_at.is_(None),
-        )
-        .limit(1)
-    ).scalar_one_or_none()
-    if participant:
-        return ticket
-
-    follower = db.execute(
-        select(TicketFollower)
-        .where(
-            TicketFollower.tenant_id == tenant_id,
-            TicketFollower.ticket_id == ticket_id,
-            TicketFollower.user_id == user_id,
-            TicketFollower.deleted_at.is_(None),
-        )
-        .limit(1)
-    ).scalar_one_or_none()
-    if follower:
-        return ticket
-
-    approval_item = db.execute(
-        select(TicketApprovalItem.id)
-        .join(TicketApprovalCycle, TicketApprovalCycle.id == TicketApprovalItem.cycle_id)
-        .where(
-            TicketApprovalItem.tenant_id == tenant_id,
-            TicketApprovalItem.approver_user_id == user_id,
-            TicketApprovalItem.status.in_(
-                [TicketApprovalItemStatusEnum.PENDING, TicketApprovalItemStatusEnum.OVERDUE]
-            ),
-            TicketApprovalCycle.ticket_id == ticket_id,
-            TicketApprovalCycle.status.in_(
-                [TicketApprovalCycleStatusEnum.PENDING, TicketApprovalCycleStatusEnum.OVERDUE]
-            ),
-        )
-        .limit(1)
-    ).scalar_one_or_none()
-    if approval_item:
-        return ticket
-
-    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to view ticket")
+    raise HTTPException(403, "Not authorized to view ticket")
 
 
 def create_ticket(
@@ -484,7 +428,9 @@ def create_ticket(
     requested_assignee = payload.assigned_user_id or payload.owner_id
     owner_id = str(requested_assignee) if requested_assignee else None
     if owner_id is None:
-        owner_id = _resolve_default_assignee(db, department_id=payload.department_id)
+        owner_id = _resolve_default_assignee(db, tenant_id=tenant_id, department_id=payload.department_id)
+    require_tenant_users(db, tenant_id, [user_id, payload.owner_id, payload.assigned_user_id,
+        owner_id, *payload.followers, *payload.approvers])
 
     if payload.approval_enabled and not payload.due_date:
         raise HTTPException(
@@ -608,6 +554,7 @@ def create_ticket(
     )
     audit_logger.log_event(
         audit_logger.AuditLogInput(
+            tenant_id=tenant_id,
             action="TICKET_CREATED",
             category=app_models.AuditLogCategoryEnum.TICKET,
             actor_id=user_id,
@@ -703,6 +650,8 @@ def update_ticket(
             _is_assignee(participant_roles) or _is_creator(ticket, user_id)):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to update ticket")
 
+    require_tenant_users(db, tenant_id, [payload.owner_id, payload.assigned_user_id,
+        *(payload.approvers or [])])
     changes: dict[str, object] = {}
     previous_status = ticket.status
     previous_priority = ticket.priority
@@ -833,6 +782,7 @@ def update_ticket(
 
         audit_logger.log_event(
             audit_logger.AuditLogInput(
+            tenant_id=tenant_id,
                 action="TICKET_UPDATED",
                 category=app_models.AuditLogCategoryEnum.TICKET,
                 actor_id=user_id,
@@ -877,6 +827,7 @@ def update_ticket(
     if ticket.owner_id != previous_owner_id and ticket.owner_id:
         audit_logger.log_event(
             audit_logger.AuditLogInput(
+            tenant_id=tenant_id,
                 action="TICKET_ASSIGNED",
                 category=app_models.AuditLogCategoryEnum.TICKET,
                 actor_id=user_id,
@@ -929,6 +880,7 @@ def update_ticket(
     if status_changed:
         audit_logger.log_event(
             audit_logger.AuditLogInput(
+            tenant_id=tenant_id,
                 action="TICKET_STATUS_CHANGED",
                 category=app_models.AuditLogCategoryEnum.TICKET,
                 actor_id=user_id,
@@ -1070,7 +1022,7 @@ def update_ticket(
             ),
         )
 
-    if update_fields and ticket.created_by and ticket.created_by != user_id:
+    if changes and ticket.created_by and ticket.created_by != user_id:
         notification_service.create_notification(
             db,
             user_id=str(ticket.created_by),
@@ -1167,6 +1119,7 @@ def soft_delete_ticket(
     )
     audit_logger.log_event(
         audit_logger.AuditLogInput(
+            tenant_id=tenant_id,
             action="TICKET_DELETED",
             category=app_models.AuditLogCategoryEnum.TICKET,
             actor_id=user_id,
@@ -1244,6 +1197,7 @@ def transfer_ticket(
     )
     audit_logger.log_event(
         audit_logger.AuditLogInput(
+            tenant_id=tenant_id,
             action="TICKET_TRANSFERRED",
             category=app_models.AuditLogCategoryEnum.TICKET,
             actor_id=user_id,
@@ -1290,6 +1244,7 @@ def update_participants(
             detail="Not authorized to manage participants",
         )
 
+    require_tenant_users(db, tenant_id, [change.user_id for change in payload.add])
     now = _now()
     added: list[dict[str, str]] = []
     removed: list[dict[str, str]] = []
@@ -1566,6 +1521,7 @@ def request_ticket_approval(
     if len(unique_approvers) > MAX_APPROVERS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Maximum of 5 approvers allowed")
 
+    require_tenant_users(db, tenant_id, unique_approvers)
     attempt_count = db.execute(
         select(TicketApproval)
         .where(TicketApproval.tenant_id == tenant_id, TicketApproval.ticket_id == ticket_id)
@@ -1926,6 +1882,7 @@ def close_ticket(
     )
     audit_logger.log_event(
         audit_logger.AuditLogInput(
+            tenant_id=tenant_id,
             action="TICKET_CLOSED",
             category=app_models.AuditLogCategoryEnum.TICKET,
             actor_id=user_id,
@@ -2099,10 +2056,16 @@ def _notify_department_members(
     department_id: uuid.UUID,
     ticket: Ticket,
 ) -> None:
-    stmt = select(User).where(User.department_id == str(department_id))
+    stmt = select(User).where(User.department_id == str(department_id),
+        User.tenant_id == tenant_id, User.status == UserStatusEnum.ACTIVE)
     users = db.execute(stmt).scalars().all()
     for user in users:
         user_id = str(user.id)
+        try:
+            get_ticket_for_user(db, tenant_id=tenant_id, ticket_id=ticket.id,
+                current_user=user, roles=[user.role.value])
+        except HTTPException:
+            continue
         notification = TicketNotification(
             tenant_id=tenant_id,
             user_id=user_id,

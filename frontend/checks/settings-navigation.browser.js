@@ -392,6 +392,11 @@ async function verifySettingsNavigation(page) {
     "icon": "settings.sidebar-management"
   }
 ];
+  registry.splice(registry.findIndex(page => page.id === 'settings.api') + 1, 0, {
+    id: 'settings.mcp-management', defaultLabel: 'MCP Management', route: '/settings/mcp-management',
+    permittedRoles: ['owner', 'admin'], parentId: 'settings', isSystemProtected: false,
+    navigationLocation: 'settings-tab', desktop: true, mobile: true, icon: 'settings.mcp-management',
+  });
   let policyVersion = 0;
   let policyUnavailable = false;
   let policyRules = Object.fromEntries(registry.map(p => [p.id, { enabled: true, hidden: false, allowedRoles: p.permittedRoles }]));
@@ -991,7 +996,7 @@ async function verifySettingsNavigation(page) {
     mediaError = true;
     await visit('/settings/media-library'); await selected('media-library');
     await page.getByText('Fixture media unavailable', { exact: true }).waitFor();
-    assert(await page.getByRole('tab').count() === 7, 'error removed Settings navigation');
+    assert(await page.getByRole('tab').count() === 8, 'error removed Settings navigation');
     mediaError = false;
   });
   await check('Logout remains accessible through the existing header account menu', async () => {

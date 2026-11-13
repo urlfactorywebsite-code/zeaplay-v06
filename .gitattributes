@@ -1,0 +1,2 @@
+# Preserve the exact bytes of the reviewed MCP schema on Windows checkouts.
+backend/mcp_migrations/phase4a.sql text eol=lf

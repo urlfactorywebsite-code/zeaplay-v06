@@ -14,6 +14,18 @@ from uuid import uuid4
 from .. import models, schemas
 from ..schemas_task_information import TaskInformationRead
 from ..services import task_information
+from ..services.tenant_users import require_tenant_users, ensure_transfer_scope
+from ..services.task_access import (
+    ensure_task_tenant as _ensure_task_tenant,  # noqa: F401 -- compatibility export for comments
+    ensure_task_access as _ensure_task_access,
+    ensure_task_update_access as _ensure_task_update_access,
+    ensure_task_delete_access,
+    apply_task_visibility as _apply_task_visibility,
+)
+from ..services.task_serialization import (
+    serialize_task as _serialize_task,
+    serialize_tasks as _serialize_tasks,
+)
 from ..cache import build_cache_key, get_cached_json, invalidate_prefix, set_cached_json
 from ..config import get_settings
 from ..notifiers import get_notifier
@@ -48,6 +60,8 @@ def _task_query() -> select:
             selectinload(models.Task.creator),
             selectinload(models.Task.followers),
             selectinload(models.Task.dependencies).selectinload(models.Task.creator),
+            selectinload(models.Task.dependencies).selectinload(models.Task.assignee),
+            selectinload(models.Task.dependencies).selectinload(models.Task.followers),
         )
         .order_by(models.Task.created_at.desc())
     )
@@ -67,25 +81,6 @@ def _status_title_map(db: Session) -> dict[str, str]:
 def _resolve_status_title(status: models.TaskStatusEnum, status_title_map: dict[str, str]) -> str:
     status_key = getattr(status, "value", status)
     return status_title_map.get(status_key, status_key)
-
-
-def _serialize_task(task: models.Task, status_title_map: dict[str, str], *, include_rewards=True) -> schemas.TaskRead:
-    payload = schemas.TaskRead.model_validate(task)
-    tenant_id = task.creator.tenant_id
-    same_assignee = task.assignee is not None and task.assignee.tenant_id == tenant_id
-    return payload.model_copy(update={
-        "subtask_rewards": subtask_rewards.summary(task) if include_rewards else None,
-        "status_title": _resolve_status_title(task.status, status_title_map),
-        "assignee": payload.assignee if same_assignee else None,
-        "assigned_to_id": task.assigned_to_id if same_assignee else None,
-        "dependencies": [schemas.TaskSummary.model_validate(dependency) for dependency in task.dependencies if dependency.creator and dependency.creator.tenant_id == tenant_id],
-        "follower_ids": [follower.id for follower in task.followers if follower.tenant_id == tenant_id],
-    })
-
-
-def _serialize_tasks(tasks: List[models.Task], status_title_map: dict[str, str]) -> List[schemas.TaskRead]:
-    rewards = subtask_rewards.summary_map(tasks)
-    return [_serialize_task(task, status_title_map, include_rewards=False).model_copy(update={"subtask_rewards":rewards.get(task.id)}) for task in tasks]
 
 
 def _serialize_task_card_item(task: models.Task) -> schemas.TaskListItem:
@@ -161,78 +156,14 @@ def _fetch_task_or_404(db: Session, task_id: str, *, lock=False, actor=None) -> 
     return task
 
 
-def _ensure_task_tenant(task: models.Task, user: models.User) -> None:
-    if not task.creator or task.creator.tenant_id != user.tenant_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
-
-
-def _ensure_task_access(task: models.Task, user: models.User) -> None:
-    _ensure_task_tenant(task, user)
-    if user.role in {models.RoleEnum.ADMIN, models.RoleEnum.OWNER}:
-        return
-    if user.role == models.RoleEnum.MANAGER:
-        if task.created_by_id == user.id or task.assigned_to_id == user.id:
-            return
-        if any(follower.id == user.id for follower in task.followers):
-            return
-        if user.department_id:
-            assignee_department_id = task.assignee.department_id if task.assignee else None
-            if assignee_department_id == user.department_id:
-                return
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions for this task")
-    if (
-        task.created_by_id != user.id
-        and task.assigned_to_id != user.id
-        and not any(follower.id == user.id for follower in task.followers)
-    ):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions for this task")
-
-
-def _ensure_task_update_access(task: models.Task, user: models.User) -> None:
-    _ensure_task_tenant(task, user)
-    if task.ticket_id:
-        if task.created_by_id != user.id and task.assigned_to_id != user.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only the task creator or assignee can update this ticket task",
-            )
-        return
-    _ensure_task_access(task, user)
-
-
 def _ensure_priority_allowed(priority: models.TaskPriorityEnum, user: models.User) -> None:
     return
 
 
-def _apply_task_visibility(stmt: select, current_user: models.User) -> select:
-    stmt = stmt.where(models.Task.creator.has(models.User.tenant_id == current_user.tenant_id))
-    if current_user.role == models.RoleEnum.MANAGER:
-        visibility_filters = [
-            models.Task.created_by_id == current_user.id,
-            models.Task.assigned_to_id == current_user.id,
-            models.Task.followers.any(models.User.id == current_user.id),
-        ]
-        if current_user.department_id:
-            visibility_filters.append(
-                models.Task.assignee.has(models.User.department_id == current_user.department_id)
-            )
-        return stmt.where(or_(*visibility_filters))
-    if current_user.role not in {models.RoleEnum.ADMIN, models.RoleEnum.OWNER}:
-        return stmt.where(
-            or_(
-                models.Task.created_by_id == current_user.id,
-                models.Task.assigned_to_id == current_user.id,
-                models.Task.followers.any(models.User.id == current_user.id),
-            )
-        )
-    return stmt
-
-
 def _task_cache_allowed(user: models.User) -> bool:
-    # Employee/manager membership can be revoked between cache writes. Serving
-    # task bodies or aggregate counts from their old scope would bypass live
-    # authorization after a missed invalidation or Redis outage.
-    return user.role in {models.RoleEnum.OWNER, models.RoleEnum.ADMIN}
+    # Even staff scope changes when a task creator changes tenants. No reliable
+    # resource authorization generation exists for these payloads yet.
+    return False
 
 
 def _resolve_task_followers(
@@ -617,7 +548,7 @@ def list_tasks(
     if manager_notifications_created:
         get_notifier().send_webex_message("Task overdue escalation detected.")
     status_title_map = _status_title_map(db)
-    serialized = _serialize_tasks(tasks, status_title_map)
+    serialized = _serialize_tasks(tasks, status_title_map, current_user=current_user)
     if cache_key:
         set_cached_json(
             cache_key,
@@ -643,18 +574,13 @@ def transfer_tasks(
     if payload.from_user_id == payload.to_user_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Source and target users must differ")
 
-    from_user = db.get(models.User, payload.from_user_id)
-    to_user = db.get(models.User, payload.to_user_id)
-    if not from_user or not to_user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-
-    if current_user.tenant_id:
-        if from_user.tenant_id != current_user.tenant_id or to_user.tenant_id != current_user.tenant_id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant mismatch")
-
-    if current_user.role == models.RoleEnum.MANAGER and current_user.department_id:
+    users = require_tenant_users(db, current_user.tenant_id,
+        [payload.from_user_id, payload.to_user_id], allow_inactive=[payload.from_user_id])
+    from_user, to_user = users[payload.from_user_id], users[payload.to_user_id]
+    if current_user.role == models.RoleEnum.MANAGER:
         if (
-            from_user.department_id != current_user.department_id
+            not current_user.department_id
+            or from_user.department_id != current_user.department_id
             or to_user.department_id != current_user.department_id
         ):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Department mismatch")
@@ -664,6 +590,12 @@ def transfer_tasks(
     if payload.statuses:
         stmt = stmt.where(models.Task.status.in_(payload.statuses))
     tasks = db.execute(stmt).scalars().all()
+    # Lock and authorize the complete batch before changing any assignment.
+    tasks = [_fetch_task_or_404(db, task.id, lock=True, actor=current_user) for task in tasks]
+    for task in tasks:
+        ensure_transfer_scope(task, current_user, task.assignee, to_user)
+        if task.assigned_to_id != from_user.id:
+            raise HTTPException(409, "Assignment changed; reload before transferring")
     now = datetime.utcnow()
     for task in tasks:
         subtask_rewards.lock_scope(db, task.id)
@@ -713,14 +645,15 @@ def create_task_transfer_request(
     current_user: models.User = Depends(get_current_active_user),
 ) -> schemas.TaskTransferWorkflowRead:
     task = _fetch_task_or_404(db, task_id, lock=True, actor=current_user)
-    _ensure_task_access(task, current_user)
+    _ensure_task_update_access(task, current_user)
 
     if payload.to_user_id == task.assigned_to_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Task is already assigned to this user")
 
-    target_user = db.get(models.User, payload.to_user_id)
-    if not target_user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target user not found")
+    users = require_tenant_users(db, current_user.tenant_id,
+        [task.assigned_to_id, payload.to_user_id], allow_inactive=[task.assigned_to_id])
+    target_user = users[payload.to_user_id]
+    ensure_transfer_scope(task, current_user, users.get(task.assigned_to_id), target_user)
 
     existing = db.execute(
         select(models.TaskTransferRequest).where(
@@ -754,8 +687,10 @@ def create_task_transfer_request(
         task.assigned_at = now
 
     db.add(transfer_request)
-    for affected_id in subtask_rewards.lock_scope(db, task.id):
-        subtask_rewards.reconcile(db, actor_id=current_user.id, task_id=affected_id, authorized_parent_write=True)
+    # Assignment transfer changes only this task; group locks do not authorize
+    # accounting writes to independently assigned siblings.
+    subtask_rewards.lock_scope(db, task.id)
+    subtask_rewards.reconcile(db, actor_id=current_user.id, task_id=task.id, authorized_parent_write=True)
 
     db.commit()
 
@@ -803,6 +738,13 @@ def create_task_transfer_request(
         recipient_ids.discard(str(current_user.id))
 
         for recipient_id in recipient_ids:
+            recipient = db.get(models.User, recipient_id)
+            if not recipient or recipient.status != models.UserStatusEnum.ACTIVE:
+                continue
+            try:
+                ensure_transfer_scope(task, recipient, task.assignee, target_user)
+            except HTTPException:
+                continue
             notification_service.create_notification(
                 db,
                 user_id=recipient_id,
@@ -853,10 +795,19 @@ def act_on_transfer_request(
     if not transfer_request:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transfer request not found")
 
-    if transfer_request.status != models.TaskTransferStatusEnum.PENDING:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Transfer request already acted on")
-
     task = _fetch_task_or_404(db, transfer_request.task_id, lock=True, actor=current_user)
+    transfer_request = db.scalar(select(models.TaskTransferRequest)
+        .where(models.TaskTransferRequest.id == request_id).with_for_update()
+        .execution_options(populate_existing=True))
+    users = require_tenant_users(db, current_user.tenant_id,
+        [transfer_request.from_user_id, transfer_request.to_user_id],
+        allow_inactive=[transfer_request.from_user_id] + (
+            [transfer_request.to_user_id] if payload.decision != "approved" else []))
+    ensure_transfer_scope(task, current_user, users.get(transfer_request.from_user_id), users.get(transfer_request.to_user_id))
+    if transfer_request.status != models.TaskTransferStatusEnum.PENDING:
+        raise HTTPException(409, "Transfer request already acted on")
+    if task.assigned_to_id != transfer_request.from_user_id:
+        raise HTTPException(409, "Assignment changed; submit a new transfer request")
     now = datetime.utcnow()
     transfer_request.approved_by_id = current_user.id
     transfer_request.acted_at = now
@@ -868,8 +819,10 @@ def act_on_transfer_request(
     else:
         transfer_request.status = models.TaskTransferStatusEnum.REJECTED
 
-    for affected_id in subtask_rewards.lock_scope(db, task.id):
-        subtask_rewards.reconcile(db, actor_id=current_user.id, task_id=affected_id, authorized_parent_write=True)
+    # Assignment transfer changes only this task; group locks do not authorize
+    # accounting writes to independently assigned siblings.
+    subtask_rewards.lock_scope(db, task.id)
+    subtask_rewards.reconcile(db, actor_id=current_user.id, task_id=task.id, authorized_parent_write=True)
 
     db.commit()
 
@@ -918,18 +871,18 @@ def list_tasks_page(
     request: Request,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
-    search: Optional[str] = Query(default=None, description="Search title, description, team, or assignee name."),
+    search: Optional[str] = Query(default=None, pattern=r"^[^\x00-\x1f\x7f]*$", description="Search title, description, team, or assignee name."),
     status: Optional[models.TaskStatusEnum] = Query(default=None),
     priority: Optional[models.TaskPriorityEnum] = Query(default=None),
-    assignee_id: Optional[str] = Query(default=None),
-    team: Optional[str] = Query(default=None),
-    tag: Optional[str] = Query(default=None),
+    assignee_id: Optional[str] = Query(default=None, pattern=r"^[^\x00-\x1f\x7f]*$"),
+    team: Optional[str] = Query(default=None, pattern=r"^[^\x00-\x1f\x7f]*$"),
+    tag: Optional[str] = Query(default=None, pattern=r"^[^\x00-\x1f\x7f]*$"),
     due_date: Optional[str] = Query(default=None),
     created_date: Optional[str] = Query(default=None),
     quick_filter: Optional[str] = Query(default=None),
     sort_by: str = Query(default="created_at"),
     sort_order: str = Query(default="desc"),
-    cursor: Optional[str] = Query(default=None, description="Cursor in the form '<sort-value>|<task-id>' for forward pagination."),
+    cursor: Optional[str] = Query(default=None, pattern=r"^[^\x00-\x1f\x7f]*$", description="Cursor in the form '<sort-value>|<task-id>' for forward pagination."),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user),
 ) -> schemas.TaskListResponse:
@@ -992,7 +945,10 @@ def list_tasks_page(
     page_stmt = base_stmt.options(selectinload(models.Task.subtasks), selectinload(models.Task.followers), selectinload(models.Task.creator), selectinload(models.Task.assignee))
     if cursor and sort_by in {"created_at", "lastUpdated", "dueAt"}:
         cursor_value, _, cursor_id = cursor.partition("|")
-        cursor_dt = datetime.fromisoformat(cursor_value) if cursor_value else None
+        try:
+            cursor_dt = datetime.fromisoformat(cursor_value) if cursor_value else None
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid task cursor") from None
         cursor_column = models.Task.created_at if sort_by == "created_at" else models.Task.updated_at if sort_by == "lastUpdated" else models.Task.due_at
         if cursor_dt:
             if sort_order == "asc":
@@ -1276,7 +1232,7 @@ def get_calendar_tasks(
     tasks = db.execute(stmt).unique().scalars().all()
     status_title_map = _status_title_map(db)
     _log_slow_endpoint("tasks.calendar.tasks", started_at)
-    return _serialize_tasks(tasks, status_title_map)
+    return _serialize_tasks(tasks, status_title_map, current_user=current_user)
 
 
 @router.get("/{task_id}/information", response_model=TaskInformationRead)
@@ -1286,8 +1242,8 @@ def get_task_information(
     section: Literal["overview", "timeline", "subtasks", "points", "activity"] = "overview",
     page: int = Query(1, ge=1, le=1000000),
     page_size: int = Query(25, ge=1, le=100),
-    search: str = Query("", max_length=200),
-    subtask_id: Optional[str] = Query(None, max_length=36),
+    search: str = Query("", max_length=200, pattern=r"^[^\x00-\x1f\x7f]*$"),
+    subtask_id: Optional[str] = Query(None, max_length=36, pattern=r"^[^\x00-\x1f\x7f]*$"),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user),
 ) -> TaskInformationRead:
@@ -1374,7 +1330,7 @@ def create_task(
             .all()
         )
         for existing_task in existing_group_tasks:
-            _ensure_task_access(existing_task, current_user)
+            _ensure_task_update_access(existing_task, current_user)
         existing_assignees = {task.assigned_to_id for task in existing_group_tasks}
 
     assignee_cache: dict[str, models.User] = {}
@@ -1567,7 +1523,7 @@ def create_task(
     ordered_records = [created_map[task_id] for task_id in created_ids if task_id in created_map]
 
     status_title_map = _status_title_map(db)
-    serialized_records = _serialize_tasks(ordered_records, status_title_map)
+    serialized_records = _serialize_tasks(ordered_records, status_title_map, current_user=current_user)
     for created_task in serialized_records:
         background_tasks.add_task(
             trigger_n8n_event,
@@ -1982,7 +1938,7 @@ def assign_task_template(
     tasks = db.execute(_task_query().where(models.Task.id.in_(task_ids))).unique().scalars().all()
 
     status_title_map = _status_title_map(db)
-    serialized_tasks = _serialize_tasks(tasks, status_title_map)
+    serialized_tasks = _serialize_tasks(tasks, status_title_map, current_user=current_user)
     for task in serialized_tasks:
         background_tasks.add_task(
             trigger_n8n_event,
@@ -2005,7 +1961,7 @@ def _publish_activity(user):
 
 
 @router.get("/activity")
-def get_personal_activity(user_id: Optional[str] = Query(None, max_length=36),
+def get_personal_activity(user_id: Optional[str] = Query(None, min_length=1, max_length=36, pattern=r"^[^\x00-\x1f\x7f]+$"),
     db: Session = Depends(get_db), current_user: models.User = Depends(get_current_active_user)):
     return task_activity.snapshot(db, actor_id=current_user.id, user_id=user_id)
 
@@ -2046,7 +2002,7 @@ def get_task(
     task = _fetch_task_or_404(db, task_id)
     _ensure_task_access(task, current_user)
     status_title_map = _status_title_map(db)
-    result = _serialize_task(task, status_title_map)
+    result = _serialize_task(task, status_title_map, current_user=current_user)
     if include_subtask_activity:
         # Reuse the immutable repository and canonical read permission checks.
         result.subtask_activity = [schemas.SubtaskActivityRead.model_validate(row)
@@ -2064,10 +2020,13 @@ def get_task_group(
     task = _fetch_task_or_404(db, task_id)
     _ensure_task_access(task, current_user)
 
-    stmt = _task_query().where(models.Task.task_group_id == task.task_group_id, models.Task.creator.has(models.User.tenant_id == current_user.tenant_id))
+    # Ungrouped legacy tasks must not expand every other NULL-group task.
+    group_filter = (models.Task.task_group_id == task.task_group_id
+                    if task.task_group_id else models.Task.id == task.id)
+    stmt = _apply_task_visibility(_task_query().where(group_filter), current_user)
     group_tasks = db.execute(stmt).unique().scalars().all()
     status_title_map = _status_title_map(db)
-    return _serialize_tasks(group_tasks, status_title_map)
+    return _serialize_tasks(group_tasks, status_title_map, current_user=current_user)
 
 
 @router.patch("/{task_id}", response_model=schemas.TaskRead)
@@ -2083,6 +2042,17 @@ def update_task(
     _ensure_task_update_access(task, current_user)
 
     update_data = payload.model_dump(exclude_unset=True)
+    # lock_scope already locks this tenant's group in stable ID order. Authorize
+    # the complete shared write set BEFORE mutation, autoflush or side effects.
+    peer_tasks = []
+    if task.task_group_id and {"title", "description", "priority"}.intersection(update_data):
+        peer_tasks = db.execute(_task_query().where(
+            models.Task.task_group_id == task.task_group_id,
+            models.Task.id != task.id,
+            models.Task.creator.has(models.User.tenant_id == current_user.tenant_id),
+        ).execution_options(populate_existing=True)).unique().scalars().all()
+        for peer in peer_tasks:
+            _ensure_task_update_access(peer, current_user)
     workflow_fields = {"approval_required", "approver_id", "completed_at"}
     if workflow_fields.intersection(update_data) and current_user.role == models.RoleEnum.USER and task.created_by_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the task creator or staff can change approval configuration or completion timestamps")
@@ -2231,16 +2201,7 @@ def update_task(
         if update_data["clarity_rating"] != previous_clarity_rating:
             record_clarity_rating(db, task, update_data["clarity_rating"])
 
-    if shared_updates and task.task_group_id:
-        peer_stmt = (
-            select(models.Task)
-            .where(
-                models.Task.task_group_id == task.task_group_id,
-                models.Task.id != task.id,
-                models.Task.creator.has(models.User.tenant_id == current_user.tenant_id),
-            )
-        )
-        peer_tasks = db.execute(peer_stmt).scalars().all()
+    if shared_updates:
         for peer in peer_tasks:
             for field, value in shared_updates.items():
                 setattr(peer, field, value)
@@ -2419,7 +2380,10 @@ def update_task(
             )
         )
 
-    for affected_id in subtask_rewards.lock_scope(db, task.id):
+    # Locking a group is not write authority over every assignment. Reconcile
+    # only the anchor and the pre-authorized peers actually receiving shared edits.
+    subtask_rewards.lock_scope(db, task.id)
+    for affected_id in [task.id, *(peer.id for peer in peer_tasks)]:
         subtask_rewards.reconcile(db, actor_id=current_user.id, task_id=affected_id, authorized_parent_write=True)
 
     db.commit()
@@ -2427,7 +2391,7 @@ def update_task(
 
     updated_task = _fetch_task_or_404(db, task_id)
     status_title_map = _status_title_map(db)
-    serialized_task = _serialize_task(updated_task, status_title_map)
+    serialized_task = _serialize_task(updated_task, status_title_map, current_user=current_user)
 
     background_tasks.add_task(
         trigger_n8n_event,
@@ -2537,7 +2501,7 @@ def complete_task(
 
     updated_task = _fetch_task_or_404(db, task_id)
     status_title_map = _status_title_map(db)
-    serialized_task = _serialize_task(updated_task, status_title_map)
+    serialized_task = _serialize_task(updated_task, status_title_map, current_user=current_user)
 
     if should_award_points:
         background_tasks.add_task(
@@ -2624,7 +2588,7 @@ def approve_task(
 
     updated_task = _fetch_task_or_404(db, task_id)
     status_title_map = _status_title_map(db)
-    return _serialize_task(updated_task, status_title_map)
+    return _serialize_task(updated_task, status_title_map, current_user=current_user)
 
 
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -2636,13 +2600,13 @@ def delete_task(
     current_user: models.User = Depends(get_current_active_user),
 ) -> None:
     task = _fetch_task_or_404(db, task_id, lock=True, actor=current_user)
-    _ensure_task_access(task, current_user)
+    ensure_task_delete_access(task, current_user)
     if db.scalar(select(models.AuditEvent.id).where(models.AuditEvent.task_id==task_id, models.AuditEvent.audit_schema_version==2).limit(1)):
         raise HTTPException(409, "This task has immutable history and must be retained; remove its assignment instead of deleting it")
     from ..services.workload_notifications import task_notice
     task_notice(db, task, "task_deleted", f"Task '{task.title}' was deleted.")
     status_title_map = _status_title_map(db)
-    serialized_task = _serialize_task(task, status_title_map)
+    serialized_task = _serialize_task(task, status_title_map, current_user=current_user)
 
     process_badge_event(
         db,
@@ -2738,7 +2702,7 @@ def update_subtask(
     subtask = subtask_service.edit(db, actor_id=current_user.id, task_id=task_id,
         subtask_id=subtask_id, data=payload)
     if subtask.version == previous_version:
-        return _serialize_task(task, _status_title_map(db))
+        return _serialize_task(task, _status_title_map(db), current_user=current_user)
 
     now = datetime.utcnow()
     process_badge_event(
@@ -2772,7 +2736,7 @@ def update_subtask(
 
     updated_task = _fetch_task_or_404(db, task_id)
     status_title_map = _status_title_map(db)
-    serialized_task = _serialize_task(updated_task, status_title_map)
+    serialized_task = _serialize_task(updated_task, status_title_map, current_user=current_user)
     background_tasks.add_task(
         trigger_n8n_event,
         "task.subtask_updated",

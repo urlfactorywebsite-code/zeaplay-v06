@@ -10,11 +10,6 @@ x-common-restart: &common_restart
 
 name: zeaplay_v1
 
-<<<<<<< ours
-services:
-  # Keep your existing services unchanged
-=======
->>>>>>> theirs
 services:
   # Keep your existing services unchanged
   postgres:
@@ -132,6 +127,7 @@ services:
     env_file: *common_env
     environment:
       PRESENCE_PORT: ${PRESENCE_PORT}
+      PRESENCE_SESSION_VALIDATION_URL: ${PRESENCE_SESSION_VALIDATION_URL:-http://backend:7211/auth/presence/validate}
       PRESENCE_REDIS_URL: ${PRESENCE_REDIS_URL}
       PRESENCE_JWT_SECRET: ${PRESENCE_JWT_SECRET}
       PRESENCE_JWT_ALGORITHM: ${PRESENCE_JWT_ALGORITHM}

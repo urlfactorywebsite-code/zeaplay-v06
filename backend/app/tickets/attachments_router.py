@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 from typing import Any, Optional
@@ -123,7 +124,11 @@ def _require_ticket_access(
     current_user: User,
     roles: list[str],
 ) -> Ticket:
-    ticket = _get_ticket(db, tenant_id=tenant_id, ticket_id=ticket_id)
+    # Nested file operations cannot be broader than the canonical ticket read.
+    # Retain the existing attachment-specific rule as an additional restriction.
+    from .service import get_ticket_for_user
+    ticket = get_ticket_for_user(db, tenant_id=tenant_id, ticket_id=ticket_id,
+                                 current_user=current_user, roles=roles)
     user_id = str(current_user.id)
     if not _user_has_access(
         db,
@@ -146,7 +151,10 @@ def _parse_filename_from_key(file_key: str) -> str:
 
 def _validate_file_key(file_key: str, *, tenant_id: uuid.UUID, ticket_id: uuid.UUID) -> None:
     expected_prefix = f"tenant/{tenant_id}/tickets/{ticket_id}/"
-    if not file_key.startswith(expected_prefix):
+    # Uploaded ticket objects have exactly one sanitized filename after the
+    # server-owned prefix. Do not send ambiguous paths to storage/proxies.
+    leaf = file_key[len(expected_prefix):] if file_key.startswith(expected_prefix) else ""
+    if not leaf or leaf in {".", ".."} or not re.fullmatch(r"[A-Za-z0-9._-]+", leaf):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid file_key")
 
 

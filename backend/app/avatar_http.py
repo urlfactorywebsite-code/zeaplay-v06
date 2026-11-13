@@ -7,6 +7,7 @@ from fastapi.routing import APIRoute
 from starlette.staticfiles import StaticFiles
 
 from .config import get_settings
+from .media_http import sandbox_uploaded_response
 
 
 class AvatarUploadRoute(APIRoute):
@@ -53,4 +54,7 @@ class AvatarSafeStaticFiles(StaticFiles):
             r"avatars/library/default-avatar-(?:0[1-9]|10)\.svg", normalized
         ):
             raise HTTPException(status_code=404, detail="Not found")
-        return await super().get_response(path, scope)
+        response = await super().get_response(path, scope)
+        if normalized.startswith("task_templates/"):
+            return sandbox_uploaded_response(response)
+        return response

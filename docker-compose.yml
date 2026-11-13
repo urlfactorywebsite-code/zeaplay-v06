@@ -8,11 +8,7 @@ services:
       POSTGRES_USER: zeaplay
       POSTGRES_PASSWORD: zeaplay
     ports:
-<<<<<<< ours
-      - "6432:5432"
-=======
       - "7432:5432"
->>>>>>> theirs
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
@@ -44,15 +40,12 @@ services:
       context: ./presence-server
     environment:
       PRESENCE_PORT: 7212
+      PRESENCE_SESSION_VALIDATION_URL: ${PRESENCE_SESSION_VALIDATION_URL:-http://backend:7211/auth/presence/validate}
       PRESENCE_REDIS_URL: redis://redis:7379
       PRESENCE_JWT_SECRET: change_me
       PRESENCE_JWT_ALGORITHM: HS256
       PRESENCE_EVENTS_CHANNEL: presence:events
-<<<<<<< ours
-      PRESENCE_CORS_ORIGINS: http://localhost:6300,http://127.0.0.1:6300,http://localhost:5173,http://127.0.0.1:5173
-=======
       PRESENCE_CORS_ORIGINS: http://localhost:7300,http://127.0.0.1:7300,http://localhost:5173,http://127.0.0.1:5173
->>>>>>> theirs
     ports:
       - "7212:7212"
     depends_on:
@@ -70,11 +63,7 @@ services:
       PRESENCE_URL: http://localhost:7212
       CHAT_URL: http://localhost:7212
     ports:
-<<<<<<< ours
-      - "6300:80"
-=======
       - "7300:80"
->>>>>>> theirs
     depends_on:
       - backend
       - presence

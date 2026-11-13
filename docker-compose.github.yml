@@ -2,13 +2,9 @@
 # PostgreSQL, Redis and the existing worker images remain defined by production.
 services:
   backend:
-<<<<<<< ours
-    image: zeaplay-v06/backend:local
-=======
     volumes:
       - backend_media:/app/media
     image: zeaplay-v06/backend:v6.1.7
->>>>>>> theirs
     build:
       context: ${ZEAPLAY_SOURCE_DIR:-.}/backend
     # The source Dockerfile uses Uvicorn; gunicorn_conf.py is not in this checkout.
@@ -18,30 +14,18 @@ services:
       - --host
       - 0.0.0.0
       - --port
-<<<<<<< ours
-      - "6211"
-      - --workers
-      - ${WEB_CONCURRENCY:-2}
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:6211/health', timeout=5)"]
-=======
       - "7211"
       - --workers
       - ${WEB_CONCURRENCY:-2}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7211/health', timeout=5)"]
->>>>>>> theirs
       interval: 10s
       timeout: 6s
       retries: 12
       start_period: 60s
 
   frontend:
-<<<<<<< ours
-    image: zeaplay-v06/frontend:local
-=======
     image: zeaplay-v06/frontend:v6.1.7
->>>>>>> theirs
     build:
       context: ${ZEAPLAY_SOURCE_DIR:-.}/frontend
       args:
@@ -53,15 +37,9 @@ services:
         VITE_TICKET_CHAT_WS_URL: ${VITE_TICKET_CHAT_WS_URL:-${TICKET_CHAT_WS_URL:-wss://todoplay.urlfactory.website}}
 
   presence:
-<<<<<<< ours
-    image: zeaplay-v06/presence:local
-    build:
-      context: ${ZEAPLAY_SOURCE_DIR:-.}/presence-server
-=======
     image: zeaplay-v06/presence:v6.1.7
     build:
       context: ${ZEAPLAY_SOURCE_DIR:-.}/presence-server
 
 volumes:
   backend_media:
->>>>>>> theirs

@@ -39,6 +39,7 @@ PAGES = [
     page("settings.support", "Support", "/settings/support", parent="settings", location="settings-tab"),
     page("settings.master-control", "Master Control", "/settings/master-control", OWNER, parent="settings", location="settings-tab"),
     page("settings.api", "API", "/settings/api", tuple(role.value for role in API_ADMIN_ROLES), parent="settings", location="settings-tab"),
+    page("settings.mcp-management", "MCP Management", "/settings/mcp-management", tuple(role.value for role in API_ADMIN_ROLES), parent="settings", location="settings-tab"),
     page("settings.logs", "Logs", "/settings/logs", STAFF, parent="settings", location="settings-tab"),
     page("settings.media-library", "Media Library", "/settings/media-library", parent="settings", location="settings-tab"),
     page("settings.sidebar-management", "Sidebar Management", "/settings/sidebar-management", ADMINS, parent="settings", protected=True, location="settings-tab"),
@@ -59,6 +60,8 @@ def api_pages(path: str, method: str = "GET") -> tuple[str, ...]:
     path = path.removeprefix("/api").rstrip("/")
     if path == "/support":
         return ("settings.support",)
+    if path == "/mcp-management" or path.startswith("/mcp-management/"):
+        return ("settings.mcp-management",)
     if path.startswith("/tasks/calendar"):
         return ("calendar",)
     if path == "/tasks/kanban" or path.startswith("/kanban"):

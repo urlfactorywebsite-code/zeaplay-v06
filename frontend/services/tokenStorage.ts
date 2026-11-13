@@ -23,6 +23,33 @@ export function getRefreshToken(): string | null {
   return localStorage.getItem(REFRESH_TOKEN_KEY);
 }
 
+/** Wait for a completed credential update after a cross-renderer lock handoff.
+ * The deadline bounds a lost issuer/response; it is not a delay before refresh.
+ * No token is sent or broadcast and no refresh POST is retried here.
+ */
+export function waitForTokenChange(access: string | null, refresh: string): Promise<boolean> {
+  if (typeof window === 'undefined') return Promise.resolve(false);
+  return new Promise(resolve => {
+    let timer: ReturnType<typeof setTimeout>;
+    const complete = (changed: boolean) => {
+      clearTimeout(timer);
+      window.removeEventListener('storage', received);
+      resolve(changed);
+    };
+    const check = () => {
+      // Both values must change: never publish half of the two-key update.
+      if (getAccessToken() !== access && getRefreshToken() !== refresh) complete(true);
+    };
+    const received = (event: StorageEvent) => {
+      if (event.storageArea === localStorage && (event.key === null
+          || event.key === ACCESS_TOKEN_KEY || event.key === REFRESH_TOKEN_KEY)) check();
+    };
+    window.addEventListener('storage', received);
+    timer = setTimeout(() => complete(false), 8000);
+    check(); // Covers a receipt arriving immediately before listener attachment.
+  });
+}
+
 export function clearTokens(): void {
   clearPushBinding();
   avatarImageCache.clear();

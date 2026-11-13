@@ -12,6 +12,7 @@ from .. import models, schemas, rate_limit
 from ..database import get_db
 from ..dependencies import get_current_active_user
 from ..services import media_service, minio_media_service
+from ..services.media_access import require_media_owner_tenant
 
 router = APIRouter(prefix="/media", tags=["media"])
 
@@ -211,8 +212,9 @@ def delete_media(
 ):
     media_file = db.get(models.MediaFile, media_id)
     if media_file:
+        require_media_owner_tenant(db, owner_id=media_file.user_id, user=current_user)
         if media_file.deleted_at is not None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media file not found")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media not found")
         if current_user.role != models.RoleEnum.OWNER:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Owner privileges required")
         minio_media_service.delete_media_file(db, media_file=media_file)

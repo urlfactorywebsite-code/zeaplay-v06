@@ -16,6 +16,7 @@ from .. import models as app_models
 from ..models import NotificationTypeEnum, User
 from ..notifiers import get_notifier
 from ..services import notifications as notification_service
+from ..services.tenant_users import require_tenant_users
 from ..webhooks import payloads as webhook_payloads
 from ..webhooks import service as webhook_service
 from .models import (
@@ -31,6 +32,7 @@ from .models import (
     TicketCloseEvent,
     TicketCloseReasonEnum,
     TicketParticipant,
+    TicketParticipantRoleEnum,
     TicketResolutionEnum,
     TicketStatusEnum,
     TicketStatusHistory,
@@ -127,7 +129,7 @@ def _build_approval_cycle_payload(
 ) -> dict:
     approver_ids = [item.approver_user_id for item in approvers]
     users = db.execute(
-        select(User).where(User.id.in_(approver_ids))
+        select(User).where(User.id.in_(approver_ids), User.tenant_id == cycle.tenant_id)
     ).scalars().all()
     user_map = {str(user.id): user for user in users}
     return {
@@ -194,6 +196,7 @@ def _ensure_ticket_task_access(
             TicketParticipant.ticket_id == ticket.id,
             TicketParticipant.user_id == user_id,
             TicketParticipant.deleted_at.is_(None),
+            TicketParticipant.role.in_([TicketParticipantRoleEnum.OWNER, TicketParticipantRoleEnum.ASSIGNEE]),
         )
         .limit(1)
     ).scalar_one_or_none()
@@ -329,6 +332,7 @@ def request_ticket_approval(
     if len(unique_approvers) > MAX_APPROVERS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Too many approvers selected")
 
+    require_tenant_users(db, tenant_id, [value[0] for value in unique_approvers])
     now = _now()
     cycle = TicketApprovalCycle(
         tenant_id=tenant_id,
@@ -394,6 +398,10 @@ def request_ticket_approval(
                 user_id=first_approver_id,
                 notification_type=NotificationTypeEnum.APPROVAL_REQUESTED,
                 message=f'{current_user.name or "Someone"} requested approval for "{ticket.title}".',
+                actor_id=user_id,
+                entity_type=app_models.NotificationEntityTypeEnum.TICKET,
+                entity_id=str(ticket.id),
+                deep_link=f"/tickets/{ticket.id}",
             )
         get_notifier().send_webex_message(
             f"Approval requested for ticket '{ticket.title}' (id: {ticket.id})."
@@ -488,6 +496,8 @@ def approve_ticket_cycle(
     _require_role_for_approval(roles)
     user_id = str(current_user.id)
     cycle, items = _get_cycle_with_items(db, tenant_id=tenant_id, cycle_id=cycle_id)
+    get_ticket_for_user(db, tenant_id=tenant_id, ticket_id=cycle.ticket_id,
+        current_user=current_user, roles=roles)
     if cycle.status not in {TicketApprovalCycleStatusEnum.PENDING, TicketApprovalCycleStatusEnum.OVERDUE}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Approval cycle is not active")
     _ensure_sequential_turn(cycle=cycle, items=items, approver_id=user_id)
@@ -586,6 +596,8 @@ def reject_ticket_cycle(
     _require_role_for_approval(roles)
     user_id = str(current_user.id)
     cycle, items = _get_cycle_with_items(db, tenant_id=tenant_id, cycle_id=cycle_id)
+    get_ticket_for_user(db, tenant_id=tenant_id, ticket_id=cycle.ticket_id,
+        current_user=current_user, roles=roles)
     if cycle.status not in {TicketApprovalCycleStatusEnum.PENDING, TicketApprovalCycleStatusEnum.OVERDUE}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Approval cycle is not active")
     _ensure_sequential_turn(cycle=cycle, items=items, approver_id=user_id)
@@ -709,6 +721,8 @@ def list_pending_approvals(
     if not include_all:
         item_stmt = item_stmt.where(TicketApprovalItem.approver_user_id == user_id)
 
+    from .access import ticket_access_predicate
+    item_stmt = item_stmt.where(ticket_access_predicate(current_user))
     rows = db.execute(item_stmt.order_by(TicketApprovalCycle.requested_at_utc.desc())).all()
     results: list[PendingApprovalItemRead] = []
     for item, cycle, ticket in rows:
@@ -780,6 +794,7 @@ def create_ticket_task(
         roles=roles,
     )
     _ensure_ticket_task_access(db, ticket=ticket, user_id=str(current_user.id), roles=roles)
+    require_tenant_users(db, tenant_id, [payload.assigned_to])
     now = _now()
     task = TicketTask(
         tenant_id=tenant_id,
@@ -847,9 +862,11 @@ def update_ticket_task(
     ).scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
-    ticket = get_ticket(db, tenant_id=tenant_id, ticket_id=task.ticket_id)
+    ticket = get_ticket_for_user(db, tenant_id=tenant_id, ticket_id=task.ticket_id,
+        current_user=current_user, roles=roles)
     _ensure_ticket_task_access(db, ticket=ticket, user_id=str(current_user.id), roles=roles)
 
+    require_tenant_users(db, tenant_id, [payload.assigned_to])
     updated_fields = payload.model_dump(exclude_unset=True)
     for key, value in updated_fields.items():
         setattr(task, key, value)
@@ -906,12 +923,16 @@ def complete_ticket_task(
     ).scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
-    ticket = get_ticket(db, tenant_id=tenant_id, ticket_id=task.ticket_id)
+    ticket = get_ticket_for_user(db, tenant_id=tenant_id, ticket_id=task.ticket_id,
+        current_user=current_user, roles=roles)
     _ensure_ticket_task_access(db, ticket=ticket, user_id=str(current_user.id), roles=roles)
 
     if task.status == TicketTaskStatusEnum.COMPLETED:
         return TicketTaskRead.model_validate(task)
 
+    # Historical assignments may outlive a tenant move. Never credit a wallet
+    # in another tenant; an inactive same-tenant user's earned history is kept.
+    require_tenant_users(db, tenant_id, [task.assigned_to], allow_inactive=[task.assigned_to])
     now = _now()
     task.status = TicketTaskStatusEnum.COMPLETED
     task.completed_at_utc = now
@@ -982,9 +1003,14 @@ def list_ticket_logs(
     *,
     tenant_id: uuid.UUID,
     ticket_id: uuid.UUID,
+    current_user: User,
     page: int,
     page_size: int,
 ) -> TicketAuditLogPage:
+    get_ticket_for_user(
+        db, tenant_id=tenant_id, ticket_id=ticket_id,
+        current_user=current_user, roles=[current_user.role.value],
+    )
     page = max(page, 1)
     page_size = min(max(page_size, 1), 50)
     stmt = select(TicketAuditLog).where(

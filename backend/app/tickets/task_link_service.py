@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..events.bus import emit_ticket_event
 from ..services.gamification import COMPLETED_STATUSES
+from ..services.tenant_users import require_tenant_users
 from .models import Ticket, TicketActivityLog, TicketPriorityEnum, TicketStatusEnum, TicketTaskLink, TicketParticipant, TicketParticipantRoleEnum
 
 
@@ -87,6 +88,7 @@ def _create_task_from_ticket(
     title: str,
     description: str,
 ) -> models.Task:
+    require_tenant_users(db, ticket.tenant_id, [created_by_id, ticket.owner_id])
     task = models.Task(
         title=title,
         description=description,

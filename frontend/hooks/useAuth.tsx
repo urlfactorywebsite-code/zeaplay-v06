@@ -1,8 +1,8 @@
-import React, { createContext, useState, useContext, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { createContext, useState, useContext, useEffect, useRef } from 'react';
 import { User, Role } from '../types';
 import api from '../services/mockApi';
 import { getAccessToken } from '../services/tokenStorage';
+import { sessionIdentity } from '../services/sessionRefresh';
 import { AUTH_EXPIRED_EVENT, USER_PROFILE_UPDATED_EVENT } from '../utils/appEvents';
 import PageLoader from '../components/loading/PageLoader';
 
@@ -18,44 +18,53 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  console.log('useAuth.tsx: AuthProvider rendering');
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const navigate = useNavigate();
+  const generation = useRef(0);
 
   useEffect(() => {
-    console.log('useAuth.tsx: AuthProvider useEffect running');
+    let mounted = true;
+    let observed = sessionIdentity(getAccessToken());
     const checkLoggedIn = async () => {
-      console.log('useAuth.tsx: Checking if user is logged in');
+      const request = ++generation.current;
+      const expected = sessionIdentity(getAccessToken());
+      observed = expected;
+      const current = () => mounted && request === generation.current
+        && sessionIdentity(getAccessToken()) === expected;
       setLoading(true);
       try {
         if (!getAccessToken()) {
-          setUser(null);
-          setLoading(false);
+          if (current()) setUser(null);
           return;
         }
         const currentUser = await api.getCurrentUser();
-        console.log('useAuth.tsx: Current user fetched:', currentUser);
-        setUser(currentUser);
-      } catch (error) {
-        console.error('useAuth.tsx: Error fetching current user:', error);
-        setUser(null);
+        if (current()) setUser(currentUser);
+      } catch {
+        if (current()) setUser(null);
       } finally {
-        setLoading(false);
+        if (current()) setLoading(false);
       }
     };
-    checkLoggedIn();
-  }, []);
-
-  useEffect(() => {
     const handleAuthExpired = () => {
+      ++generation.current;
+      observed = sessionIdentity(getAccessToken());
       setUser(null);
       setLoading(false);
-      navigate('/login');
+      // ProtectedRoute owns the login redirect; do not compete with it here.
     };
+    const changed = (event: StorageEvent) => {
+      if (event.key !== null && event.key !== 'vee_access_token' && event.key !== 'vee_refresh_token') return;
+      if (sessionIdentity(getAccessToken()) !== observed) void checkLoggedIn();
+    };
+    void checkLoggedIn();
     window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
-    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
-  }, [navigate]);
+    window.addEventListener('storage', changed);
+    return () => {
+      mounted = false; ++generation.current;
+      window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+      window.removeEventListener('storage', changed);
+    };
+  }, []);
   
   useEffect(() => {
     const updated = (event: Event) => {
@@ -67,14 +76,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const login = async (email: string, pass: string) => {
+    const request = ++generation.current;
     const loggedInUser = await api.login(email, pass);
-    setUser(loggedInUser);
+    if (request === generation.current) { setUser(loggedInUser); setLoading(false); }
   };
 
   const logout = () => {
+    ++generation.current;
     api.logout();
     setUser(null);
-    navigate('/login');
+    setLoading(false);
   };
 
   const updateUserInContext = (updatedUser: User) => {

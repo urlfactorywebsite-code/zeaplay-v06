@@ -381,6 +381,7 @@ class Department(Base):
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (CheckConstraint("auth_epoch >= 0", name="ck_users_auth_epoch"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
@@ -388,6 +389,8 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     employer_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    # PostgreSQL migration trigger advances this on security-sensitive updates.
+    auth_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     role: Mapped[RoleEnum] = mapped_column(SAEnum(RoleEnum), default=RoleEnum.USER, nullable=False)
     department_id: Mapped[Optional[str]] = mapped_column(
         String(36), ForeignKey("departments.id", ondelete="SET NULL"), nullable=True
@@ -1157,8 +1160,10 @@ class AuditLog(Base):
         Index("ix_audit_logs_category", "category"),
         Index("ix_audit_logs_action", "action"),
         Index("ix_audit_logs_status", "status"),
+        Index("ix_audit_logs_tenant_created", "tenant_id", "created_at"),
     )
 
+    tenant_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
     actor_id: Mapped[Optional[str]] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True

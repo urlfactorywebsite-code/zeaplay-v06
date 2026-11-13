@@ -1,3 +1,4 @@
+import { createSessionRefresh, sessionIdentity, RefreshStorageUnavailableError } from './sessionRefresh';
 import { TASKS_CHANGED_EVENT, notifyTasksChanged } from '../utils/taskEvents';
 import { mapApiSubtask, subtaskCreateRequest, subtaskRequest, type ApiSubtask } from '../utils/subtaskWorkflow';
 import type { SubtaskChanges } from '../types';
@@ -190,7 +191,7 @@ import {
   MediaSortOption,
   StorageProvider,
 } from '../types';
-import { storeTokens, getAccessToken, getRefreshToken, clearTokens } from './tokenStorage';
+import { storeTokens, getAccessToken, getRefreshToken, clearTokens, waitForTokenChange } from './tokenStorage';
 import { clearCredentialHistory, clearLegacyProviderCredentials, LEGACY_CREDENTIAL_HISTORY_KEY } from '../utils/credentialHistory';
 import { augmentTaskWithPoints } from '../utils/taskPoints';
 import { AUTH_EXPIRED_EVENT, USER_PROFILE_UPDATED_EVENT } from '../utils/appEvents';
@@ -1549,7 +1550,7 @@ export const http: AxiosInstance = axios.create({
 
 http.interceptors.request.use((config) => {
   const token = getAccessToken();
-  if (token) {
+  if (token && !config.headers?.Authorization) {
     if (!config.headers) {
       config.headers = new AxiosHeaders();
     }
@@ -1567,32 +1568,27 @@ http.interceptors.request.use((config) => {
   return config;
 });
 
-let refreshPromise: Promise<string | null> | null = null;
-
 function notifyAuthExpired(): void {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
   }
 }
 
-async function refreshAccessToken(): Promise<string | null> {
-  const refreshToken = getRefreshToken();
-  if (!refreshToken) {
-    notifyAuthExpired();
-    return null;
-  }
-  try {
-    const { data } = await axios.post(`${API_BASE_URL}/auth/refresh`, {
-      refresh_token: refreshToken,
-    });
-    storeTokens(data.access_token, data.refresh_token);
-    return data.access_token as string;
-  } catch (error) {
-    clearTokens();
-    notifyAuthExpired();
-    return null;
-  }
-}
+const refreshAccessToken = createSessionRefresh({
+  getAccess: getAccessToken, getRefresh: getRefreshToken,
+  store: pair => storeTokens(pair.access_token, pair.refresh_token),
+  expire: () => { clearTokens(); notifyAuthExpired(); },
+  attempted: () => localStorage.getItem('vee_refresh_attempt'),
+  markAttempt: id => localStorage.setItem('vee_refresh_attempt', id),
+  waitForChange: waitForTokenChange,
+  request: async refreshToken => {
+    const { data } = await axios.post(`${API_BASE_URL}/auth/refresh`, { refresh_token: refreshToken });
+    return data;
+  },
+  lock: work => typeof navigator !== 'undefined' && navigator.locks
+    ? navigator.locks.request('zeaplay-session-refresh', work)
+    : Promise.reject(new Error('Secure cross-tab refresh coordination is unavailable')),
+});
 
 http.interceptors.response.use(
   (response) => {
@@ -1602,20 +1598,27 @@ http.interceptors.response.use(
   async (error) => {
     const { response, config } = error;
     stopGlobalLoadingTask(config?.globalProgressTaskId);
-    if (response?.status === 401 && !config.__isRetryRequest) {
-      if (!refreshPromise) {
-        refreshPromise = refreshAccessToken();
+    const authOperation = /\/(?:auth\/(?:login|register|refresh|logout|logout-all)|oauth2\/token)(?:$|\?)/.test(config?.url || '');
+    if (response?.status === 401 && config && !config.__isRetryRequest && !authOperation) {
+      const failedAccess = String(config.headers?.Authorization || '').replace(/^Bearer /i, '') || null;
+      let newToken: string | null;
+      try {
+        newToken = await refreshAccessToken(failedAccess);
+      } catch (error) {
+        if (error instanceof RefreshStorageUnavailableError
+            && sessionIdentity(getAccessToken()) === sessionIdentity(failedAccess)) notifyAuthExpired();
+        // The safe coordination error must not become the original Axios 401:
+        // bootstrap would treat that as authority to erase the shared store.
+        return Promise.reject(error);
       }
-      const newToken = await refreshPromise;
-      refreshPromise = null;
-      if (newToken) {
+      if (newToken && sessionIdentity(getAccessToken()) === sessionIdentity(newToken)) {
         config.__isRetryRequest = true;
         config.headers = config.headers ?? {};
         config.headers.Authorization = `Bearer ${newToken}`;
         return http(config);
       }
-      clearTokens();
-      notifyAuthExpired();
+      // A stale response must not clear a newer login or resurrect a logout.
+      if (getAccessToken() === failedAccess) { clearTokens(); notifyAuthExpired(); }
     }
     return Promise.reject(error);
   }
@@ -2937,23 +2940,32 @@ const api = {
   },
 
     async getCurrentUser(): Promise<User | null> {
-      try {
-        const { data } = await http.get<ApiUser>('/auth/me', { timeout: 8000 });
-        return mapUser(data);
-      } catch (error) {
-        if (axios.isAxiosError(error)) {
-          if (error.code === 'ECONNABORTED' || !error.response) {
-            clearTokens();
-            return null;
-          }
-          if (error.response?.status === 401) {
+      const expected = sessionIdentity(getAccessToken());
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const requestedAccess = getAccessToken();
+        if (sessionIdentity(requestedAccess) !== expected) return null;
+        try {
+          const { data } = await http.get<ApiUser>('/auth/me', { timeout: 8000 });
+          // A previous account's successful response is not current authority.
+          if (sessionIdentity(getAccessToken()) !== expected) return null;
+          return mapUser(data);
+        } catch (error) {
+          if (sessionIdentity(getAccessToken()) !== expected) return null;
+          // A stale GET failure must not destroy another tab's valid rotation.
+          // Retry only this read, once, with a successor in the same session.
+          // Refresh POSTs remain single-attempt under the existing coordinator.
+          if (attempt === 0 && expected && getAccessToken() !== requestedAccess) continue;
+          if (axios.isAxiosError(error) && error.response?.status === 401) {
             clearTokens();
             notifyAuthExpired();
             return null;
           }
+          // A network timeout is not evidence of revocation. Preserve storage;
+          // the authentication context handles the unavailable read safely.
+          mapAxiosError(error);
         }
-        mapAxiosError(error);
       }
+      return null;
     },
 
     async getPresenceToken(): Promise<BearerTokenPreview> {

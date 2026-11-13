@@ -1,5 +1,5 @@
 // Route identities only. Authorization and labels come from the server registry.
-const keys = ['profile', 'support', 'master-control', 'api', 'logs', 'media-library', 'sidebar-management'] as const;
+const keys = ['profile', 'support', 'master-control', 'api', 'mcp-management', 'logs', 'media-library', 'sidebar-management'] as const;
 export type SettingsTabKey = typeof keys[number];
 export const SETTINGS_TABS = keys.map(key => ({ key, path: `/settings/${key}` }));
 

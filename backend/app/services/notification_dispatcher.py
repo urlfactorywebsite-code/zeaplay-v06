@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..integrations import trigger_n8n_event
 from . import audit_logger, push_service
+from .notification_access import can_deliver
 
 
 MODULES = {"tasks", "tickets", "users", "departments", "comments", "chat"}
@@ -101,8 +102,13 @@ def create_history_notification(
     related_reward_id: Optional[str] = None,
     related_chat_id: Optional[str] = None,
     actor_id: Optional[str] = None,
-) -> models.Notification:
+) -> Optional[models.Notification]:
+    recipient = db.get(models.User, user_id, populate_existing=True)
+    actor = db.get(models.User, actor_id, populate_existing=True) if actor_id else None
+    if not recipient or (actor_id and (not actor or actor.tenant_id != recipient.tenant_id)):
+        return None
     notification = models.Notification(
+        tenant_id=recipient.tenant_id,
         user_id=user_id,
         type=notification_type,
         title=title,
@@ -116,12 +122,15 @@ def create_history_notification(
         related_chat_id=related_chat_id,
         created_at=datetime.utcnow(),
     )
+    if not can_deliver(db, notification, recipient):
+        return None
     db.add(notification)
     db.flush()
     payload = schemas.NotificationRead.model_validate(notification).model_dump()
     trigger_n8n_event("notification.created", payload)
     audit_logger.log_event(
         audit_logger.AuditLogInput(
+            tenant_id=recipient.tenant_id,
             action="NOTIFICATION_SENT",
             category=models.AuditLogCategoryEnum.NOTIFICATION,
             actor_id=str(actor_id) if actor_id else None,
@@ -154,6 +163,10 @@ def push_if_enabled(
         return 0
 
     recipient_ids = list({user_id for user_id in user_ids if user_id})
+    if payload.get("notification_id"):
+        notice = db.get(models.Notification, payload["notification_id"])
+        recipient_ids = [uid for uid in recipient_ids if notice and notice.user_id == uid
+            and can_deliver(db, notice, db.get(models.User, uid))]
     if not recipient_ids:
         return 0
 
@@ -203,6 +216,8 @@ def dispatch_notification(
         related_chat_id=related_chat_id,
         actor_id=actor_id,
     )
+    if notification is None:
+        return None
     module = resolve_module(notification_type, entity_type)
     push_if_enabled(
         db,
@@ -228,6 +243,8 @@ def deliver_stored_notification(db: Session, notification: models.Notification, 
     Never creates a second inbox record. Caller rechecks access/preferences and
     owns the delivery transaction; push retries use the original notification ID.
     """
+    if not can_deliver(db, notification, db.get(models.User, notification.user_id)):
+        return
     push_if_enabled(db, user_ids=[notification.user_id], module="tasks", retry_failures=True, attempt=notification.delivery_attempts, payload={
         "title": _resolve_title(notification), "body": _resolve_body(notification),
         "url": _resolve_url(notification), "module": "tasks",
@@ -238,6 +255,7 @@ def deliver_stored_notification(db: Session, notification: models.Notification, 
     payload["tenant_id"] = str(notification.tenant_id)
     trigger_n8n_event("notification.created", payload)
     audit_logger.log_event(audit_logger.AuditLogInput(
+        tenant_id=notification.tenant_id,
         action="NOTIFICATION_SENT", category=models.AuditLogCategoryEnum.NOTIFICATION,
         entity_type="notification", entity_id=notification.id, target_user_id=notification.user_id,
         source=models.AuditLogSourceEnum.AUTOMATION,

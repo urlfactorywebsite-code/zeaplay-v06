@@ -1,12 +1,7 @@
 """Pydantic schemas for request and response bodies."""
 
-<<<<<<< ours
-from datetime import date, datetime
-from typing import Any, Dict, List, Optional, Literal
-=======
 import json
 from datetime import date, datetime, timezone
->>>>>>> theirs
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
@@ -772,6 +767,12 @@ class SubtaskActivityRead(BaseModel):
 
 class TaskRead(TaskBase):
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("ticket_id", mode="before")
+    @classmethod
+    def serialize_ticket_id(cls, value):
+        # The ORM uses UUID; keep the existing JSON string/null contract.
+        return str(value) if isinstance(value, UUID) else value
 
     id: str
     status: TaskStatusEnum

@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import models
-from ..cache import build_cache_key, get_cached_json, invalidate_prefix, set_cached_json, tenant_prefix
+from ..cache import invalidate_prefix, tenant_prefix
 from ..config import get_settings
 from ..database import get_db
 from ..dependencies import get_current_user, get_tenant_id, require_roles
@@ -117,16 +117,9 @@ def list_tickets_handler(
     current_user: User = Depends(get_current_user),
     roles: list[str] = Depends(require_roles()),
 ) -> TicketListResponse:
-    cache_key = build_cache_key(
-        resource="tickets:list",
-        tenant_id=str(tenant_id),
-        user_id=str(current_user.id),
-        path=request.url.path,
-        params=request.query_params.multi_items(),
-    )
-    cached_payload = get_cached_json(cache_key)
-    if cached_payload is not None:
-        return TicketListResponse(data=[TicketRead.model_validate(item) for item in cached_payload])
+    # Membership, role and department changes are live database authority.
+    # Payload caching remains disabled until a reliable authorization generation
+    # covers every relationship writer (including administrative SQL updates).
     tickets = list_tickets(
         db,
         tenant_id=tenant_id,
@@ -141,11 +134,6 @@ def list_tickets_handler(
         my_tickets=my_tickets,
     )
     serialized = [TicketRead.model_validate(ticket) for ticket in tickets]
-    set_cached_json(
-        cache_key,
-        [item.model_dump(mode="json") for item in serialized],
-        ttl_seconds=settings.cache_default_ttl_seconds,
-    )
     return TicketListResponse(data=serialized)
 
 

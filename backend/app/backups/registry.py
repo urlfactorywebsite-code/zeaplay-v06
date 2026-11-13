@@ -29,7 +29,7 @@ FIELDS = {
     "approvals": "id scope_type scope_id requested_by approver_id order_index status comment sla_hours created_at acted_at",
     "task_transfer_requests": "id task_id from_user_id to_user_id requested_by_id approved_by_id status note created_at acted_at",
     "audit_events": "id actor_id event_type entity_type entity_id created_at audit_schema_version tenant_id task_id subtask_id before after correlation_id",
-    "audit_logs": "id actor_id actor_role action category entity_type entity_id target_user_id approval_id ip_address user_agent source severity status reason trigger route method created_at deleted_at",
+    "audit_logs": "id tenant_id actor_id actor_role action category entity_type entity_id target_user_id approval_id ip_address user_agent source severity status reason trigger route method created_at deleted_at",
     "audit_retention_config": "id retention_days created_at updated_at last_applied_at",
     "tool_categories": "id name description display_order status created_at updated_at",
     "tools": "id name description website_url preview_image_url category_id tags pricing_type is_internal status created_by approved_by review_reason created_at updated_at",
@@ -97,6 +97,8 @@ FIELDS["subtasks"] += " deleted_at reward_timezone"
 FIELDS["xp_ledger"] += " calculation_inputs"
 FIELDS["task_workflow_settings"] += " reward_policy_data"
 EXCLUDED = {
+    "auth_sessions",
+    "auth_refresh_tokens",
     "smtp_config",
     "owner_reset_tokens",
     "api_config",
@@ -111,7 +113,7 @@ EXCLUDED = {
 }
 ALIASES = {"reward_claims": "user-rewards", "kanban_columns": "kanban-columns"}
 OMITTED_FIELDS = {
-    "users": {"hashed_password"},
+    "users": {"hashed_password", "auth_epoch"},
     "tasks": {"search_vector"},
     "reward_logs": {"meta"},
     "audit_events": {"payload"},

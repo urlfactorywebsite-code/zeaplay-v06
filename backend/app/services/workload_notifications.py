@@ -563,6 +563,7 @@ def visible_query(user, db=None):
     allowed_module = task_module_allowed(db, user)
 
     authorized = _apply_task_visibility(select(m.Task.id), user)
+    from .notification_access import resource_predicate, ticket_module_allowed
     subjects = select(m.User.id).where(
         m.User.tenant_id == user.tenant_id, m.User.status == m.UserStatusEnum.ACTIVE
     )
@@ -577,10 +578,8 @@ def visible_query(user, db=None):
     return select(m.Notification).where(
         m.Notification.user_id == user.id,
         m.Notification.dismissed_at.is_(None),
-        or_(
-            m.Notification.tenant_id.is_(None),
-            m.Notification.tenant_id == user.tenant_id,
-        ),
+        m.Notification.tenant_id == user.tenant_id,
+        resource_predicate(user, tasks_allowed=allowed_module, tickets_allowed=ticket_module_allowed(db, user)),
         or_(
             m.Notification.related_task_id.is_(None),
             authorized.where(m.Task.id == m.Notification.related_task_id)

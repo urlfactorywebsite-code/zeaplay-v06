@@ -4,7 +4,7 @@ import csv
 import io
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import func, or_, and_, cast, String, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from .. import models, schemas
@@ -12,6 +12,10 @@ from ..database import get_db
 from ..dependencies import get_current_admin, get_current_active_user
 from ..services import rewards as reward_service
 from ..services import audit_logger
+from ..services.audit_security import audit_read
+from ..services.task_access import apply_task_visibility
+from ..tickets.access import ticket_access_predicate
+from ..tickets.models import Ticket
 
 router = APIRouter(prefix="/logs", tags=["logs"])
 
@@ -53,14 +57,9 @@ def _parse_csv(value: str | None) -> list[str]:
 
 
 def _get_or_create_retention_config(db: Session) -> models.AuditRetentionConfig:
-    models.AuditRetentionConfig.__table__.create(bind=db.bind, checkfirst=True)
     config = db.get(models.AuditRetentionConfig, 1)
-    if not config:
-        config = models.AuditRetentionConfig(id=1, retention_days=90)
-        db.add(config)
-        db.commit()
-        db.refresh(config)
-    return config
+    return config or models.AuditRetentionConfig(id=1, retention_days=90,
+        created_at=datetime.utcnow(), updated_at=datetime.utcnow())
 
 
 def _apply_scope_filters(
@@ -69,34 +68,36 @@ def _apply_scope_filters(
     current_user: models.User,
     db: Session,
 ):
-    # Navigation and API configuration audit records remain tenant-scoped even
-    # for administrators, including webhook delivery metadata.
-    configuration_record = or_(
-        func.coalesce(models.AuditLog.entity_type, '').in_(("navigation_policy", "api_configuration", "webhook_configuration")),
-        models.AuditLog.action.in_(("NAVIGATION_POLICY_UPDATED", "API_CONFIG_UPDATED", "SMTP_CONFIG_UPDATED")),
-        models.AuditLog.action.like('WEBHOOK_%'),
-    )
-    # Unattributed historical configuration entries are retained in storage, but
-    # cannot safely be returned to a tenant administrator.
-    stmt = stmt.where(or_(~configuration_record, models.AuditLog.entity_id == str(current_user.tenant_id)))
+    stmt = stmt.where(models.AuditLog.tenant_id == current_user.tenant_id)
     if current_user.role in {models.RoleEnum.ADMIN, models.RoleEnum.OWNER}:
         return stmt
-    if current_user.role == models.RoleEnum.MANAGER:
-        if current_user.department_id:
-            department_user_ids = (
-                select(models.User.id)
-                .where(models.User.department_id == current_user.department_id)
-                .subquery()
-            )
-            return stmt.where(
-                models.AuditLog.actor_id.in_(select(department_user_ids))
-                | models.AuditLog.target_user_id.in_(select(department_user_ids))
-            )
-        return stmt.where(models.AuditLog.actor_id == str(current_user.id))
-    return stmt.where(
-        (models.AuditLog.actor_id == str(current_user.id))
-        | (models.AuditLog.target_user_id == str(current_user.id))
+    task_ids = apply_task_visibility(select(models.Task.id), current_user)
+    ticket_ids = select(cast(Ticket.id, String)).where(ticket_access_predicate(current_user))
+    approvals = select(models.Approval.id).where(or_(
+        and_(models.Approval.scope_type == models.ApprovalScopeTypeEnum.TASK, models.Approval.scope_id.in_(task_ids)),
+        and_(models.Approval.scope_type.in_([models.ApprovalScopeTypeEnum.TICKET, models.ApprovalScopeTypeEnum.OVERRIDE_CLOSE]),
+             models.Approval.scope_id.in_(ticket_ids)),
+    ))
+    from ..services.notification_access import resource_predicate
+    notices = select(models.Notification.id).where(models.Notification.tenant_id == current_user.tenant_id,
+        resource_predicate(current_user))
+    resource_scope = or_(
+        and_(models.AuditLog.entity_type == "task", models.AuditLog.entity_id.in_(task_ids)),
+        and_(models.AuditLog.entity_type == "ticket", models.AuditLog.entity_id.in_(ticket_ids)),
+        and_(models.AuditLog.entity_type == "approval", models.AuditLog.entity_id.in_(approvals)),
+        and_(models.AuditLog.entity_type == "notification", models.AuditLog.entity_id.in_(notices)),
+        and_(models.AuditLog.entity_type == "subtask", models.AuditLog.entity_id.in_(
+            select(models.Subtask.id).where(models.Subtask.task_id.in_(task_ids)))),
     )
+    subjects = select(models.User.id).where(models.User.tenant_id == current_user.tenant_id)
+    if current_user.role == models.RoleEnum.MANAGER and current_user.department_id:
+        subjects = subjects.where(models.User.department_id == current_user.department_id)
+    else:
+        subjects = subjects.where(models.User.id == current_user.id)
+    personal = or_(models.AuditLog.actor_id.in_(subjects), models.AuditLog.target_user_id.in_(subjects))
+    # Resource history cannot be obtained merely by being the historical actor.
+    return stmt.where(or_(resource_scope, and_(
+        or_(models.AuditLog.entity_type.is_(None), ~models.AuditLog.entity_type.in_(["task", "ticket", "approval", "notification", "subtask"])), personal)))
 
 
 def _build_audit_log_query(
@@ -191,7 +192,7 @@ def list_audit_logs(
     )
     total_pages = max(1, (total + page_size - 1) // page_size)
     return schemas.AuditLogListResponse(
-        items=[schemas.AuditLogRead.model_validate(item) for item in items],
+        items=[audit_read(item, current_user) for item in items],
         page=page,
         total=total,
         page_size=page_size,
@@ -235,7 +236,7 @@ def export_audit_logs(
     items = db.execute(stmt).scalars().all()
 
     if format == "json":
-        payload = [schemas.AuditLogRead.model_validate(item).model_dump() for item in items]
+        payload = [audit_read(item, current_user).model_dump() for item in items]
         return Response(
             content=json.dumps(payload, default=str),
             media_type="application/json",
@@ -263,7 +264,8 @@ def export_audit_logs(
             "new_value",
         ]
     )
-    for item in items:
+    for row in items:
+        item = audit_read(row, current_user)
         writer.writerow(
             [
                 item.id,
@@ -308,13 +310,7 @@ def update_retention_config(
 ) -> schemas.AuditRetentionConfigRead:
     if current_user.role not in {models.RoleEnum.ADMIN, models.RoleEnum.OWNER}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required")
-    config = _get_or_create_retention_config(db)
-    if payload.retention_days not in {30, 90, 180}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Retention must be 30, 90, or 180 days")
-    config.retention_days = payload.retention_days
-    db.commit()
-    db.refresh(config)
-    return schemas.AuditRetentionConfigRead.model_validate(config)
+    raise HTTPException(409, "Global retention configuration requires an approved tenancy migration")
 
 
 @router.post("/retention/apply", response_model=schemas.AuditRetentionApplyResponse)
@@ -328,11 +324,11 @@ def apply_retention_policy(
     cutoff = datetime.utcnow() - timedelta(days=config.retention_days)
     stmt = (
         update(models.AuditLog)
-        .where(models.AuditLog.created_at < cutoff, models.AuditLog.deleted_at.is_(None))
+        .where(models.AuditLog.tenant_id == current_user.tenant_id,
+               models.AuditLog.created_at < cutoff, models.AuditLog.deleted_at.is_(None))
         .values(deleted_at=datetime.utcnow())
     )
     result = db.execute(stmt)
-    config.last_applied_at = datetime.utcnow()
     db.commit()
     return schemas.AuditRetentionApplyResponse(
         updated=result.rowcount or 0,
@@ -347,7 +343,8 @@ def retry_audit_log(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_admin),
 ):
-    log = db.get(models.AuditLog, log_id)
+    log = db.scalar(_apply_scope_filters(select(models.AuditLog).where(
+        models.AuditLog.id == log_id, models.AuditLog.deleted_at.is_(None)), current_user=current_user, db=db))
     if not log:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Log not found")
     if log.category != models.AuditLogCategoryEnum.AUTOMATION:

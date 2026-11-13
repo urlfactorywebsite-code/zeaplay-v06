@@ -293,6 +293,7 @@ async def chat_ws(websocket: WebSocket) -> None:
         return
     try:
         payload = _decode_access_token(token)
+        websocket.state.auth_claims = payload
         user_id = str(payload.get("user_id") or payload.get("sub"))
     except Exception:
         await _reject_websocket(websocket)

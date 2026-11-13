@@ -6,12 +6,14 @@ from datetime import datetime
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from .. import models
 from ..services import notifications as notification_service
+from ..services.task_access import apply_task_visibility
+from ..services.tenant_users import require_tenant_users
 from .models import TicketTaskLink
-from .service import get_ticket
+from .service import get_ticket_for_user
 
 
 def _now() -> datetime:
@@ -31,12 +33,21 @@ def list_ticket_tasks(
     *,
     tenant_id,
     ticket_id,
+    current_user: models.User,
 ) -> list[models.Task]:
-    ticket = get_ticket(db, tenant_id=tenant_id, ticket_id=ticket_id)
+    ticket = get_ticket_for_user(
+        db, tenant_id=tenant_id, ticket_id=ticket_id,
+        current_user=current_user, roles=[current_user.role.value],
+    )
     return (
         db.execute(
-            select(models.Task)
+            apply_task_visibility(select(models.Task), current_user)
             .where(models.Task.ticket_id == ticket.id)
+            .options(selectinload(models.Task.creator), selectinload(models.Task.assignee),
+                     selectinload(models.Task.followers), selectinload(models.Task.subtasks),
+                     selectinload(models.Task.dependencies).selectinload(models.Task.creator),
+                     selectinload(models.Task.dependencies).selectinload(models.Task.assignee),
+                     selectinload(models.Task.dependencies).selectinload(models.Task.followers))
             .order_by(models.Task.created_at.asc())
         )
         .scalars()
@@ -52,7 +63,8 @@ def create_ticket_task(
     current_user: models.User,
     payload,
 ) -> models.Task:
-    ticket = get_ticket(db, tenant_id=tenant_id, ticket_id=ticket_id)
+    ticket = get_ticket_for_user(db, tenant_id=tenant_id, ticket_id=ticket_id,
+        current_user=current_user, roles=[current_user.role.value])
     user_id = str(current_user.id)
     _ensure_ticket_assignee(ticket, user_id)
 
@@ -62,13 +74,7 @@ def create_ticket_task(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Approver required when approval is enabled",
         )
-    if approver_id:
-        approver = db.get(models.User, approver_id)
-        if not approver:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Approver not found",
-            )
+    require_tenant_users(db, tenant_id, [approver_id, ticket.assigned_user_id, user_id])
 
     task = models.Task(
         title=ticket.title,

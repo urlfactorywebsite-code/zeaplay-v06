@@ -13,6 +13,7 @@ from .. import models
 from ..notifiers import get_notifier
 from ..services import notifications as notification_service
 from ..services import audit_logger
+from ..services.tenant_users import require_tenant_users
 from .models import Ticket, TicketApprovalStateEnum, TicketStatusEnum
 from .service import get_ticket, get_ticket_for_user
 
@@ -67,6 +68,7 @@ def request_ticket_approvals_sequential(
     if len(unique_approvers) > 5:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Maximum of 5 approvers allowed")
 
+    require_tenant_users(db, tenant_id, [value[0] for value in unique_approvers])
     now = _now()
     approvals: list[models.Approval] = []
     for index, (approver_id, _) in enumerate(unique_approvers, start=1):
@@ -95,6 +97,7 @@ def request_ticket_approvals_sequential(
     )
     audit_logger.log_event(
         audit_logger.AuditLogInput(
+            tenant_id=tenant_id,
             action="APPROVAL_REQUESTED",
             category=models.AuditLogCategoryEnum.APPROVAL,
             actor_id=user_id,
@@ -149,6 +152,8 @@ def act_on_ticket_approval(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval not found")
     if approval.scope_type != models.ApprovalScopeTypeEnum.TICKET:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid approval scope")
+    ticket = get_ticket_for_user(db, tenant_id=tenant_id, ticket_id=approval.scope_id,
+        current_user=current_user, roles=roles)
     if approval.status != models.ApprovalStatusEnum.PENDING:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Approval is not pending")
 
@@ -240,6 +245,7 @@ def act_on_ticket_approval(
     )
     audit_logger.log_event(
         audit_logger.AuditLogInput(
+            tenant_id=tenant_id,
             action="APPROVAL_DECISION",
             category=models.AuditLogCategoryEnum.APPROVAL,
             actor_id=user_id,
@@ -289,7 +295,9 @@ def request_override_close(
     if not _has_role(roles, "owner", "manager"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only owners or managers can request override")
 
-    ticket = get_ticket(db, tenant_id=tenant_id, ticket_id=ticket_id)
+    ticket = get_ticket_for_user(db, tenant_id=tenant_id, ticket_id=ticket_id,
+        current_user=current_user, roles=roles)
+    require_tenant_users(db, tenant_id, [ticket.created_by])
     now = _now()
     approval = models.Approval(
         scope_type=models.ApprovalScopeTypeEnum.OVERRIDE_CLOSE,
@@ -313,6 +321,7 @@ def request_override_close(
     )
     audit_logger.log_event(
         audit_logger.AuditLogInput(
+            tenant_id=tenant_id,
             action="APPROVAL_OVERRIDE_REQUESTED",
             category=models.AuditLogCategoryEnum.APPROVAL,
             actor_id=str(current_user.id),
@@ -392,6 +401,7 @@ def act_override_close(
     )
     audit_logger.log_event(
         audit_logger.AuditLogInput(
+            tenant_id=tenant_id,
             action="APPROVAL_OVERRIDE_DECISION",
             category=models.AuditLogCategoryEnum.APPROVAL,
             actor_id=str(current_user.id),

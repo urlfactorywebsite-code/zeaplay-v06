@@ -2,7 +2,6 @@
 from pathlib import Path
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect, select, text
 from sqlalchemy.exc import ProgrammingError
 
@@ -17,6 +16,7 @@ from .services.task_activity import ActivityLimitExceeded
 from .services.workload_notifications import limit_error_handler, start_maintenance, stop_maintenance
 from .seed import seed_database, seed_badges_from_achievements
 from .avatar_http import AvatarSafeStaticFiles
+from .media_http import UploadedMediaStaticFiles
 from .avatar_utils import ensure_avatar_dirs
 from .routers import (
     achievements,
@@ -28,6 +28,7 @@ from .routers import (
     config as config_router,
     feature_flags,
     navigation,
+    mcp_management,
     support,
     data_admin,
     departments,
@@ -485,6 +486,14 @@ app = FastAPI(title=settings.app_name, version=APP_VERSION, dependencies=[Depend
 app.add_exception_handler(ActivityLimitExceeded, limit_error_handler)
 app.include_router(navigation.router)
 app.include_router(navigation.router, prefix="/api")
+app.include_router(mcp_management.router)
+app.include_router(mcp_management.router, prefix="/api")
+import os
+if os.environ.get('ZEA_MCP_PHASE4A_ISOLATED') == '1':
+    from .mcp.router import router as mcp_oauth_router, discovery as mcp_oauth_discovery
+    app.include_router(mcp_oauth_router)
+    app.include_router(mcp_oauth_router, prefix="/api")
+    app.include_router(mcp_oauth_discovery)
 app.include_router(support.router)
 app.include_router(support.router, prefix="/api")
 
@@ -547,18 +556,14 @@ app.mount("/assets", AvatarSafeStaticFiles(directory="assets"), name="assets")
 
 uploads_directory = Path(settings.media_root) / "uploads"
 uploads_directory.mkdir(parents=True, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=str(uploads_directory)), name="media-uploads")
+app.mount("/uploads", UploadedMediaStaticFiles(directory=str(uploads_directory)), name="media-uploads")
 
 origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:3001",
     "https://play.zeacrm.com",
-<<<<<<< ours
-    "http://173.212.192.6:6300",
-=======
     "http://173.212.192.6:7300",
->>>>>>> theirs
     "http://127.0.0.1:3001",
     # add your dev or prod origins here
 ]
@@ -575,10 +580,16 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup_event() -> None:
+    from .services.auth_sessions import require_session_schema
+    require_session_schema(engine)
+    from .services.audit_security import require_audit_schema
+    require_audit_schema(engine)
     ensure_task_status_enum()
     ensure_pg_trgm_extension()
     ensure_reward_schema()
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(bind=engine, tables=[
+        table for table in Base.metadata.tables.values() if not table.info.get("alembic_only")
+    ])
     ensure_chat_schema()
     normalize_legacy_task_status_values()
     ensure_employer_id_column()
@@ -673,6 +684,7 @@ app.include_router(tool_library.router, prefix="/api")
 app.include_router(chat_router.router, prefix="/api")
 app.include_router(tickets_router.router, prefix="/api")
 app.include_router(tickets_workflow_router.router)
+app.include_router(tickets_workflow_router.read_router)
 app.include_router(webhooks.router, prefix="/api")
 app.include_router(webhooks.internal_router, prefix="/api")
 app.include_router(tasks_ws.router, prefix="/api")
