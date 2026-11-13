@@ -216,8 +216,8 @@ def create_ticket_task_handler(
     )
 
 
-# Canonical task handlers are registered first in main.py. Retain these legacy
-# runtime registrations, but do not overwrite their actual OpenAPI contracts.
+# Standalone compatibility apps retain these legacy handlers. The combined
+# application's router below excludes them in favor of the canonical task API.
 @router.patch("/tasks/{task_id}", response_model=TicketTaskRead, include_in_schema=False)
 def update_ticket_task_handler(
     task_id: uuid.UUID,
@@ -272,3 +272,14 @@ def list_ticket_logs_handler(
         page=page,
         page_size=page_size,
     )
+
+
+# The full router remains available to standalone compatibility callers. In
+# main.py these two paths are already owned by routers.tasks; registering them
+# again would create shadowed dispatch entries with a different payload model.
+application_router = APIRouter()
+application_router.include_router(router)
+application_router.routes[:] = [
+    route for route in application_router.routes
+    if route.endpoint not in {update_ticket_task_handler, complete_ticket_task_handler}
+]

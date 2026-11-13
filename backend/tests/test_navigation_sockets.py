@@ -1,32 +1,58 @@
 from types import SimpleNamespace
 from contextlib import contextmanager
+from copy import deepcopy
 import asyncio
+import uuid
 import pytest
+from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 from backend.app import models
+from backend.app.auth import decode_token_claims
 from backend.app.navigation_registry import default_rules
 from backend.app.services import navigation_sockets
+from backend.app.services.auth_sessions import issue_api, now
+from backend.app.session_models import AuthSession
+from backend.checks.navigation_fixture_app import TENANTS, create_fixture_app
 
 
 @pytest.fixture
-def state(monkeypatch):
-    user = SimpleNamespace(id="fixture", tenant_id="tenant", role=models.RoleEnum.USER, status=models.UserStatusEnum.ACTIVE)
+def state(tmp_path, monkeypatch):
+    # Exercise the real session validator against owned SQLite storage. The
+    # PostgreSQL suite separately covers production invalidation triggers.
+    app = create_fixture_app(tmp_path / 'socket-policy.db')
+    engine = app.state.fixture_engine
     rules = default_rules()
-    class DB:
-        def get(self, model, id):
-            if model is models.User: return user
-            return SimpleNamespace(pages=rules)
-    db = DB()
     @contextmanager
     def session():
-        yield db
+        with Session(engine) as db:
+            yield db
     monkeypatch.setattr(navigation_sockets, "SessionLocal", session)
-    socket = SimpleNamespace(state=SimpleNamespace())
-    return socket, user, db, rules
+    try:
+        with Session(engine) as db:
+            user = db.get(models.User, str(uuid.uuid5(TENANTS['a'], 'user')))
+            db.add(models.NavigationPolicy(tenant_id=str(user.tenant_id), pages=deepcopy(rules),
+                                           version=0, updated_by=user.id, updated_at=now()))
+            token, _ = issue_api(db, user, minutes=5, scopes=[])
+            db.commit()
+            socket = SimpleNamespace(state=SimpleNamespace(auth_claims=decode_token_claims(token)))
+            yield socket, user, db, rules
+    finally:
+        engine.dispose()
+        app.state.fixture_cleanup()
+
+
+def persist(state):
+    socket, user, db, rules = state
+    policy = db.get(models.NavigationPolicy, socket.state.auth_claims['tenant_id'])
+    policy.pages = deepcopy(rules)
+    flag_modified(policy, 'pages')
+    db.commit()
 
 
 def test_disabled_module_cannot_open_socket(state):
     socket, user, db, rules = state
     rules["tickets"]["enabled"] = False
+    persist(state)
     assert not navigation_sockets.bind_socket(socket, user, db, ("tickets",))
 
 
@@ -35,17 +61,27 @@ def test_active_socket_is_revoked_on_policy_change(state):
     assert navigation_sockets.bind_socket(socket, user, db, ("chat",))
     assert navigation_sockets.socket_allowed(socket, ("chat",))
     rules["chat"]["allowedRoles"] = ["owner"]
+    persist(state)
     assert not navigation_sockets.socket_allowed(socket, ("chat",))
 
 
-@pytest.mark.parametrize("change", ["inactive", "tenant", "disabled"])
+@pytest.mark.parametrize("change", ["inactive", "tenant", "disabled", "revoked", "epoch"])
 def test_existing_socket_rechecks_identity_and_availability(state, change):
     socket, user, db, rules = state
     assert navigation_sockets.bind_socket(socket, user, db, ("tickets",))
     if change == "inactive": user.status = models.UserStatusEnum.DEACTIVATED
-    if change == "tenant": user.tenant_id = "other"
+    if change == "tenant": user.tenant_id = TENANTS['b']
     if change == "disabled": rules["tickets"]["enabled"] = False
+    if change == "revoked": db.get(AuthSession, socket.state.auth_claims['sid']).revoked_at = now()
+    if change == "epoch": user.auth_epoch += 1
+    persist(state)
     assert not navigation_sockets.socket_allowed(socket, ("tickets",))
+
+
+def test_signed_identity_without_durable_claims_cannot_bind_socket(state):
+    socket, user, db, rules = state
+    socket.state.auth_claims = {'sub': user.id, 'tenant_id': str(user.tenant_id)}
+    assert not navigation_sockets.bind_socket(socket, user, db, ("tickets",))
 
 
 @pytest.mark.parametrize("kind", ["tasks", "tickets", "chat"])
