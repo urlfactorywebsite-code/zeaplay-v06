@@ -1,5 +1,19 @@
 # MCP progress: Phase 4A isolated implementation
 
+## Integration branch verification: 13 November 2026
+
+**READY to push for review; production release remains BLOCKED.** Branch: `integrate/zeaplay-mcp-v06`, in sibling worktree `zea-play-mcp-v06-integration`. Verified local/remote `main` and merge base were all `200b98a`, not the supplied historical refs. Explicit merge reported already up to date: **0 merge conflicts**, **0 ahead / 0 behind** before changes. Code/test commit: `25c79c8`; this entry is its documentation-only follow-up. Final integration branch is **2 ahead / 0 behind** `origin/main`; local and remote `main` remain unchanged. No reset, clean, stash, history rewrite, push or deployment occurred.
+
+Reproduced **32 failures / 118 passes**. Fixed missing isolated session tables, unbound legacy JWT/socket fixtures and missing audit tenant attribution. Role/tenant tampering now preserves a genuine session so tests exercise the intended authority checks. Repaired the password-endpoint tests to use canonical password hashing and current session issuance; added expiry, revocation, inactive-user and tenant-denial checks. Production authentication and the five MCP tools are unchanged.
+
+Removed two pre-existing shadowed task registrations from the combined app while preserving the standalone compatibility router, canonical payloads and ticket APIs. Final audit: **532 unique HTTP operations, 5 unique WebSocket paths, no conflict markers, 298 Python files parse**. Contract tests verify dispatch and OpenAPI agreement. Dependency versions and reviewed MCP SQL are unchanged.
+
+Executed results: **frontend build PASS; 132 frontend tests PASS; 176 MCP tests PASS; 326 OAuth and 169 REST/MCP integration assertions PASS; 168 targeted backend tests PASS; 51 PostgreSQL authentication/audit tests, 60 Node tests, separate-process authority and real Socket.IO revocation checks PASS**. Final OAuth/REST and session audits were rerun after the routing correction; owned processes, databases, credentials and containers were cleaned up. These results do not certify the entire legacy backend suite.
+
+TypeScript: **113 baseline diagnostics remain; 0 added/changed diagnostic lines**. Breakdown: 54 in `Ballpit.tsx`, 23 in `seedData.ts`, 36 elsewhere. The standalone typecheck still fails; unrelated modules were not refactored. **0 of the original 32 backend failures remain**. Existing production OAuth/deployment gates below remain in force. No existing application database was modified.
+
+Changed files: `backend/app/{main.py,tickets/workflow_router.py}`, `backend/checks/navigation_fixture_app.py`, `backend/tests/{test_final_api_contracts.py,test_navigation_readiness.py,test_navigation_socket_auth.py,test_navigation_sockets.py,test_oauth2_server.py}`, and this progress file only. Evidence: `C:\Users\Lenovo\AppData\Local\Temp\zea-integration-review-1794574841367`; final OAuth/REST evidence: `C:\Users\Lenovo\AppData\Local\Temp\zea-phase2b-integration-tyssbb_u`.
+
 ## Non-fast-forward push repair: 13 November 2026
 
 The local and GitHub branches have unrelated histories. Prepared a clean source snapshot on GitHub `main` (`79699f8`) instead of merging the private legacy history. Original local `main` (`ebf0d28`) and all its commits are retained at `backup/main-before-github-sync-20261113-181116`. The snapshot preserves current application code and removes the committed merge markers in GitHub's Python, Vite, Compose and deployment-script files by carrying the existing resolved local versions.
