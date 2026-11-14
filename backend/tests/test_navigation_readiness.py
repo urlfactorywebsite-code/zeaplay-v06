@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app import models
-from backend.app.auth import create_access_token
+from backend.app.auth import create_access_token, decode_token_claims
 from backend.app.config import get_settings
 from backend.app.webhooks import dispatcher
 from backend.checks.navigation_fixture_app import PASSWORD, TENANTS, create_fixture_app
@@ -103,10 +103,14 @@ def test_admin_cannot_bypass_owner_policy_controls_or_protection(app):
 
 def test_tenant_and_role_claim_spoofing_are_rejected_by_database_identity(app):
     user_id = str(uuid.uuid5(TENANTS['a'], 'user'))
-    forged_role = create_access_token(user_id, extra_claims={'tenant_id': str(TENANTS['a']), 'roles': ['owner', 'admin']})
+    member = login(app, 'user')
+    claims = decode_token_claims(member.headers['Authorization'].split()[1])
+    # Preserve the real session and alter only the claim under test. A bare
+    # signed token would be rejected before role/tenant authority is exercised.
+    forged_role = create_access_token(user_id, extra_claims={**claims, 'roles': ['owner', 'admin']})
     client = TestClient(app, headers={'Authorization': f'Bearer {forged_role}'})
     assert client.get('/config/api').status_code == 403
-    wrong_tenant = create_access_token(user_id, extra_claims={'tenant_id': str(TENANTS['b']), 'roles': ['owner']})
+    wrong_tenant = create_access_token(user_id, extra_claims={**claims, 'tenant_id': str(TENANTS['b'])})
     assert TestClient(app, headers={'Authorization': f'Bearer {wrong_tenant}'}).get('/navigation').status_code == 401
     valid = login(app, 'owner')
     claims = jwt.decode(valid.headers['Authorization'].split()[1], get_settings().jwt_secret_key, algorithms=[get_settings().jwt_algorithm])
@@ -212,6 +216,7 @@ def test_corrupt_persisted_policy_fails_closed(app):
 def test_common_role_dependency_ignores_forged_or_stale_token_roles(app):
     from fastapi import Depends
     from backend.app.dependencies import require_roles
+    from backend.app.services.auth_sessions import invalidate_user
     @app.get('/review/owner-only', dependencies=[Depends(require_roles('owner'))])
     def owner_only(): return {'ok': True}
     owner = login(app, 'owner')
@@ -219,9 +224,16 @@ def test_common_role_dependency_ignores_forged_or_stale_token_roles(app):
     with Session(app.state.fixture_engine) as db:
         user = db.get(models.User, str(uuid.uuid5(TENANTS['a'], 'owner')))
         user.role = models.RoleEnum.USER
+        # SQLite does not execute the production PostgreSQL invalidation
+        # trigger. Explicitly invalidate this fixture's session with the same
+        # canonical authority; the real trigger is tested in the PG suite.
+        invalidate_user(db, user.id)
         db.commit()
-    assert owner.get('/review/owner-only').status_code == 403
-    assert owner.get('/config/api').status_code == 403
+    assert owner.get('/review/owner-only').status_code == 401
+    assert owner.get('/config/api').status_code == 401
+    signed_in_again = login(app, 'owner')
+    assert signed_in_again.get('/review/owner-only').status_code == 403
+    assert signed_in_again.get('/config/api').status_code == 403
 
 
 @pytest.mark.parametrize('kind', ['api_configuration', 'webhook_configuration'])
@@ -229,7 +241,7 @@ def test_configuration_audit_metadata_does_not_cross_tenants(app, kind):
     from backend.app.routers.logs import _apply_scope_filters
     with Session(app.state.fixture_engine) as db:
         for tenant in TENANTS.values():
-            db.add(models.AuditLog(action='FIXTURE', category=models.AuditLogCategoryEnum.SYSTEM, entity_type=kind, entity_id=str(tenant)))
+            db.add(models.AuditLog(tenant_id=tenant, action='FIXTURE', category=models.AuditLogCategoryEnum.SYSTEM, entity_type=kind, entity_id=str(tenant)))
         db.add(models.AuditLog(action='API_CONFIG_UPDATED', category=models.AuditLogCategoryEnum.SYSTEM, entity_type=None))
         db.commit()
         user = db.get(models.User, str(uuid.uuid5(TENANTS['a'], 'admin')))

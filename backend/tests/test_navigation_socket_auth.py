@@ -6,11 +6,11 @@ from sqlalchemy.orm import Session, sessionmaker
 from starlette.websockets import WebSocketDisconnect
 
 from backend.app import models
-from backend.app.auth import create_access_token
+from backend.app.auth import create_access_token, decode_token_claims
 from backend.app.services import navigation_sockets
 from backend.app.tickets.models import Ticket, TicketParticipant
 from backend.app.ws import ticket_chat
-from backend.checks.navigation_fixture_app import TENANTS, create_fixture_app
+from backend.checks.navigation_fixture_app import PASSWORD, TENANTS, create_fixture_app
 
 
 @pytest.fixture
@@ -38,7 +38,12 @@ def test_ticket_socket_rejects_unsigned_cross_tenant_or_escalated_identity(socke
     query = ''
     if case != 'signed-out':
         role = 'user' if case == 'forged-role' else 'owner'
-        token = create_access_token(str(uuid.uuid5(TENANTS['a'], role)), extra_claims={'tenant_id': str(TENANTS['b'] if case == 'wrong-tenant' else TENANTS['a']), 'roles': ['owner']})
+        with TestClient(app) as client:
+            response = client.post('/auth/login', json={'email': f'{role}-a@readiness.example.com', 'password': PASSWORD})
+        assert response.status_code == 200
+        claims = decode_token_claims(response.json()['token']['access_token'])
+        token = create_access_token(claims['sub'], extra_claims={**claims,
+            'tenant_id': str(TENANTS['b'] if case == 'wrong-tenant' else TENANTS['a']), 'roles': ['owner']})
         query = f'?token={token}'
     with TestClient(app) as client:
         with pytest.raises(WebSocketDisconnect) as error:
@@ -49,8 +54,10 @@ def test_ticket_socket_rejects_unsigned_cross_tenant_or_escalated_identity(socke
 def test_connected_socket_closes_when_tenant_module_is_disabled(socket_app):
     from backend.app.navigation_registry import default_rules
     app, ticket_id = socket_app
-    token = create_access_token(str(uuid.uuid5(TENANTS['a'], 'admin')), extra_claims={'tenant_id': str(TENANTS['a']), 'roles': ['admin']})
     with TestClient(app) as client:
+        response = client.post('/auth/login', json={'email': 'admin-a@readiness.example.com', 'password': PASSWORD})
+        assert response.status_code == 200
+        token = response.json()['token']['access_token']
         with client.websocket_connect(f'/ws/tickets/{ticket_id}?token={token}') as socket:
             from datetime import datetime, timezone
             rules = default_rules(); rules['tickets']['enabled'] = False

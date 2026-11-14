@@ -18,6 +18,7 @@ from backend.app.auth import hash_password
 from backend.app.database import get_db
 from backend.app.navigation_guard import enforce_navigation_policy
 from backend.app.routers import auth, config, navigation, webhooks
+from backend.app.session_models import AuthRefreshToken, AuthSession
 from backend.app.tickets.models import WebhookSubscription, WebhookDeliveryLog
 
 TENANTS = {"a": uuid.UUID("a1111111-1111-4111-8111-111111111111"), "b": uuid.UUID("b2222222-2222-4222-8222-222222222222")}
@@ -50,7 +51,8 @@ def create_fixture_app(path: Path):
         engine = create_engine(f"sqlite:///{path}", connect_args={"check_same_thread": False})
     tables = [models.Department, models.User, models.AvatarAsset, models.NavigationPolicy,
               models.Reward, models.RewardClaim, models.AuditLog, models.ApiConfig, models.SmtpConfig, models.MultipleSmtpConfig,
-              models.EmailTemplate, models.OAuthConfig, WebhookSubscription, WebhookDeliveryLog]
+              models.EmailTemplate, models.OAuthConfig, WebhookSubscription, WebhookDeliveryLog,
+              AuthSession, AuthRefreshToken]
     models.Base.metadata.create_all(engine, tables=[model.__table__ for model in tables])
     with Session(engine) as db:
         for tenant_name, tenant in TENANTS.items():
